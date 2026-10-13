@@ -383,3 +383,20 @@ describe("createUpgradeGate", () => {
     expect(gate.busy()).toBe(false);
   });
 });
+
+describe("createUpgradeGate 会话隔离", () => {
+  it("release 后旧 run 迟到失败，不得清掉新一轮的占用", async () => {
+    const gate = createUpgradeGate();
+    let failOld: (ok: boolean) => void = () => {};
+    gate.begin(() => new Promise<boolean>((r) => (failOld = r)));
+    gate.release(); // 用户取消
+    gate.begin(async () => true); // 新一轮成功开跑，应保持占用
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(gate.busy()).toBe(true);
+    failOld(false); // 旧 run 迟到结算
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(gate.busy()).toBe(true);
+  });
+});

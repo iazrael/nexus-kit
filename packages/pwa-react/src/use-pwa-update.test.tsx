@@ -64,6 +64,19 @@ describe("usePwaUpdate", () => {
     await waitFor(() => expect(f.raw.beginUpgrade).toHaveBeenCalledTimes(1));
   });
 
+  it("保存期间「稍后」后立即重新确认并开跑：旧保存迟到失败不得放开重入闸（不会二次开跑）", async () => {
+    const f = fakeController();
+    const { result } = renderHook(() => usePwaUpdate(f.ctl, { saveTimeoutMs: 30 }));
+    act(() => result.current.confirm(() => new Promise<boolean>(() => {}))); // 第一次保存卡住
+    act(() => result.current.dismiss());
+    act(() => result.current.confirm(async () => true)); // 第二次很快成功 → 开跑
+    await waitFor(() => expect(f.raw.beginUpgrade).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 60)); // 第一次的保存超时迟到结算
+    act(() => result.current.confirm(async () => true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(f.raw.beginUpgrade).toHaveBeenCalledTimes(1);
+  });
+
   it("已进入下载/切换：「稍后」无效（用户已授权刷新）", () => {
     const f = fakeController();
     const { result } = renderHook(() => usePwaUpdate(f.ctl));

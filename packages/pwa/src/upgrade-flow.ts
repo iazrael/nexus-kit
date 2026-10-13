@@ -238,21 +238,25 @@ export function createUpgradeGate(): {
   release(): void;
 } {
   let inFlight = false;
+  /** 会话号：每次 begin 取号，release 推进——在途的旧 run 迟到结算对不上号，不得改写新一轮的占用 */
+  let session = 0;
   return {
     begin(run) {
       if (inFlight) return;
       inFlight = true;
+      const mine = ++session;
       run().then(
         (ok) => {
-          if (!ok) inFlight = false;
+          if (!ok && mine === session) inFlight = false;
         },
         () => {
-          inFlight = false;
+          if (mine === session) inFlight = false;
         },
       );
     },
     busy: () => inFlight,
     release() {
+      session += 1;
       inFlight = false;
     },
   };
