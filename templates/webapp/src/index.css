@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/*
+ * 全屏与安全区（机制见 nexus-kit docs/架构算法/离线与升级.md §7）：
+ * - iOS standalone + black-translucent 下，layout viewport 高度仍按「屏高 − 状态栏」算，
+ *   100% / 100vh / 100dvh 都会少一截，只有 100lvh 报完整屏高；限定 standalone，因为
+ *   Safari 标签页里 lvh 是工具栏收起后的高度、会超出可见区。
+ * - 补缺口只能靠文档流（absolute 铺满 body），不能靠 fixed：iOS 把 fixed 裁在 layout viewport 内。
+ * - 可交互 UI 一律放进 .safe-area 容器，由它统一吸收安全区，子元素不得各自再加 env()。
+ */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html,
+  body {
+    height: 100lvh;
+  }
+}
+body {
+  position: relative;
+  background: #0b0b0f;
+  color: #e7e7ea;
+}
+#root {
+  position: absolute;
+  inset: 0;
+}
+.safe-area {
+  position: absolute;
+  inset: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}

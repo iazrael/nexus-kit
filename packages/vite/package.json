@@ -1,0 +1,29 @@
+{
+  "name": "@nexus-kit/vite",
+  "version": "0.1.0",
+  "description": "构建期：nexusPwa 插件（版本注入、version.json、VitePWA 红线配置、运行时缓存分区）与构建后门禁",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@nexus-kit/pwa": ">=0.1.0",
+    "vite": ">=7",
+    "vite-plugin-pwa": ">=1.3"
+  },
+  "devDependencies": {
+    "@nexus-kit/pwa": "workspace:*",
+    "vite": "^7.3.6",
+    "vite-plugin-pwa": "^1.3.0"
+  }
+}

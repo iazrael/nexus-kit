@@ -1,0 +1,8 @@
+{
+  "appRoot": ".",
+  "changelog": {
+    "path": "CHANGELOG.md",
+    "sourceDirs": ["packages/pwa/src/", "packages/pwa-react/src/", "packages/vite/src/", "packages/devflow/src/", "templates/webapp/src/"]
+  },
+  "docs": { "root": "docs", "archiveDir": "docs/存档", "designDir": "docs/设计", "index": "CLAUDE.md" }
+}

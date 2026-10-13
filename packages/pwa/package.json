@@ -1,0 +1,27 @@
+{
+  "name": "@nexus-kit/pwa",
+  "version": "0.1.0",
+  "description": "PWA 运行时：SW 注册、更新检测、升级状态机、版本比对、安装引导、离线补缓存",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./version-check": {
+      "types": "./dist/version-check.d.ts",
+      "default": "./dist/version-check.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "happy-dom": "^18.0.1"
+  }
+}

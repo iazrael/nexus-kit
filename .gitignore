@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+
+# 构建产物（packages/*/dist 入库：git 依赖直接消费，见 docs/规范/工程质量与交付规范.md）
+templates/*/dist/
+*.tsbuildinfo
+
+# 缓存与临时
+.cache/
+coverage/
+temp/
+.build-number
+.build-number.lock
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+.DS_Store

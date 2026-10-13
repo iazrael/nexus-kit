@@ -1,0 +1,38 @@
+# nexus-kit 应用的 nginx 站点样板（部署机制见 nexus-kit docs/架构算法/部署与回滚.md）。
+# 复制到 /etc/nginx/conf.d/<app>.conf，替换 <app> 与端口后 nginx -t && systemctl reload nginx。
+# 改这份配置视同改门禁：nexus-devflow deploy 上传前会对现役响应预检缓存头与 gzip。
+server {
+    # 只监听回环：对外经隧道/反代发布，部署冒烟走回环
+    listen 127.0.0.1:8888;
+    server_name _;
+
+    # current 是部署脚本原子切换的软链；disable_symlinks off 保证切换后立即生效
+    root /var/www/<app>/current;
+    index index.html;
+    disable_symlinks off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    # application/octet-stream：无标准 MIME 的二进制数据（地图等）落 default_type，不列进来就原样下发
+    gzip_types text/css application/javascript application/json application/manifest+json image/svg+xml application/octet-stream;
+
+    # 更新链关键文件：必须带 private + no-cache——CDN 的「浏览器缓存 TTL」覆写会踩掉单独的
+    # no-cache，private 才能保持始终协商；升级探测永远拿到服务器最新内容
+    location = /index.html  { add_header Cache-Control "private, no-cache" always; }
+    location = /sw.js       { add_header Cache-Control "private, no-cache" always; }
+    location = /version.json { add_header Cache-Control "private, no-cache, no-store" always; }
+    location = /manifest.webmanifest { add_header Cache-Control "private, no-cache" always; }
+
+    # 带内容哈希的构建产物：一年 immutable
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # 其余（SPA 路由回落 index.html，同样不缓存入口）
+    location / {
+        add_header Cache-Control "private, no-cache" always;
+        try_files $uri $uri/ /index.html;
+    }
+}

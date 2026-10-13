@@ -1,0 +1,13 @@
+{
+  "appRoot": ".",
+  "changelog": { "path": "CHANGELOG.md", "sourceDirs": ["src/"] },
+  "docs": { "root": "docs", "archiveDir": "docs/存档", "designDir": "docs/设计", "index": "CLAUDE.md" },
+  "deploy": {
+    "target": "deploy@your-server",
+    "remoteRoot": "/var/www/your-app",
+    "publicUrl": "",
+    "localPort": 8888,
+    "keep": 5,
+    "branch": "main"
+  }
+}

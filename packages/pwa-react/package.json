@@ -1,0 +1,32 @@
+{
+  "name": "@nexus-kit/pwa-react",
+  "version": "0.1.0",
+  "description": "PWA 的 React 绑定：usePwaUpdate（快照订阅 + 带重入闸的确认升级）、useInstallPrompt（安装引导）",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@nexus-kit/pwa": ">=0.1.0",
+    "react": ">=19"
+  },
+  "devDependencies": {
+    "@nexus-kit/pwa": "workspace:*",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "happy-dom": "^18.0.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}
