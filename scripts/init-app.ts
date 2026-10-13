@@ -47,6 +47,9 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>
 pkg.name = name;
 writeFileSync(pkgPath, `${JSON.stringify(rewriteKitDeps(pkg, kitVersion), null, 2)}\n`);
 
+// pnpm 10 默认拦截依赖的 install 脚本：放行 esbuild，免得每次安装都弹警告（模板在 kit workspace 里由 kit 根配置放行）
+writeFileSync(join(dest, "pnpm-workspace.yaml"), "onlyBuiltDependencies:\n  - esbuild\n");
+
 const replaceIn = (rel: string, pairs: Array<[string, string]>): void => {
   const p = join(dest, rel);
   let s = readFileSync(p, "utf8");
