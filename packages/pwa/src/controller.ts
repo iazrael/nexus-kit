@@ -8,8 +8,8 @@
  * - **prompt 制红线**：没有用户主动点击的路径不得自动 reload。刷新只发生在用户确认
  *   之后——升级弹窗点「确定」，或「强制更新」按钮点击本身即授权。
  * - **弹窗时机**由快照的 promptOpen 表达：检测命中即开；宿主可 setPromptBlocked
- *   暂缓（专注流程中不打断），解除时补开；用户「稍后」关掉的同一构建不再自动开，
- *   手动检查命中强制再开。
+ *   暂缓（专注流程中不打断），解除时补开；用户「稍后」关掉的同一构建 24 小时内不再
+ *   自动开（只存内存，重开应用即重置），新构建立即开，手动检查命中强制再开。
  * - **验证开关 `?nosw=1`**：反注册 SW + 清空 Cache Storage + 本轮不注册，实机验收拿到的
  *   永远是服务器最新构建。
  * - 依赖（registerSW、日志、离线就绪钩子）全部注入：`virtual:pwa-register` 只在宿主
@@ -51,6 +51,8 @@ export interface PwaControllerOptions {
   versionUrl?: string;
   /** 心跳间隔，默认 15 分钟 */
   checkIntervalMs?: number;
+  /** 「稍后」有效期，默认 24 小时：期内同一构建不再自动开窗，过期后心跳/切前台命中再提醒 */
+  dismissTtlMs?: number;
   /** 验证开关 URL 参数名，默认 nosw */
   noSwParam?: string;
   /** sessionStorage 键前缀（nosw 防循环重载），默认 nexus */
@@ -100,7 +102,7 @@ export interface PwaController {
   checkForUpdate(source: string, opts?: { quiet?: boolean }): Promise<CheckResult>;
   /** 手动「检查更新」：判定 + 命中强制开窗（「稍后」关掉过也重开） */
   manualCheck(): Promise<CheckResult>;
-  /** 用户「稍后」：关窗，同一构建不再自动开 */
+  /** 用户「稍后」：关窗，同一构建在有效期内（默认 24 小时，重开应用即重置）不再自动开 */
   dismissPrompt(): void;
   /** 重开弹窗（「稍后」之后用户主动回来更新）：已知有更新时直接开，不重新请求网络 */
   reopenPrompt(): void;
@@ -124,6 +126,8 @@ const consoleLogger: PwaLogger = {
 
 const DEFAULT_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_SAVE_TIMEOUT_MS = 3000;
+/** 「稍后」的有效期：本次打开期间同一构建不再自动提醒，但最长 24 小时（防长时间不重开的会话永久静默） */
+const DEFAULT_DISMISS_TTL_MS = 24 * 60 * 60 * 1000;
 /** version.json 嗅探超时：弱网下手动检查不能长时间没反应 */
 const SNIFF_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 3000;
@@ -142,6 +146,7 @@ export function createPwaController(options: PwaControllerOptions): PwaControlle
   const log = options.logger ?? consoleLogger;
   const versionUrl = options.versionUrl ?? "/version.json";
   const checkIntervalMs = options.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
+  const dismissTtlMs = options.dismissTtlMs ?? DEFAULT_DISMISS_TTL_MS;
   const noSwParam = options.noSwParam ?? "nosw";
   const prefix = options.storagePrefix ?? "nexus";
   const noSwReloadedKey = `${prefix}-nosw-reloaded`;
@@ -171,10 +176,9 @@ export function createPwaController(options: PwaControllerOptions): PwaControlle
 
   let registration: ServiceWorkerRegistration | null = null;
   let started = false;
-  /** 已通知过的远端 build（同一构建不重复自动开窗） */
-  let lastNotifiedBuild = -1;
-  /** 用户「稍后」关掉的远端 build */
+  /** 用户「稍后」关掉的远端 build 与时刻：同一构建在 dismissTtlMs 内不再自动开窗（只存内存，重开应用即重置） */
   let dismissedBuild: number | null = null;
+  let dismissedAt = 0;
   let remoteBuild = -1;
   let promptBlocked = false;
   /** 升级幕布运行中：期间嗅探命中不开窗（确认窗会压在幕布后，卡死收幕后冒出一扇没点过的窗） */
@@ -201,14 +205,16 @@ export function createPwaController(options: PwaControllerOptions): PwaControlle
     return inflightProbe;
   }
 
-  /** 开窗判定：被暂缓、升级进行中、或用户已「稍后」过同一构建（非强制）都不开 */
+  const dismissActive = (): boolean => dismissedBuild !== null && dismissedBuild === remoteBuild && Date.now() - dismissedAt < dismissTtlMs;
+
+  /** 开窗判定：被暂缓、升级进行中、或用户「稍后」过同一构建且未过期（非强制）都不开 */
   function requestPrompt(reason: string, force = false): void {
     update({ needRefresh: true });
     if (upgradeInFlight) {
       log.info("升级进行中，暂不开确认窗", { reason });
       return;
     }
-    if (!force && (promptBlocked || (dismissedBuild !== null && dismissedBuild === remoteBuild))) {
+    if (!force && (promptBlocked || dismissActive())) {
       log.info("检测到新版本，暂不开窗", { reason, blocked: promptBlocked });
       return;
     }
@@ -241,10 +247,8 @@ export function createPwaController(options: PwaControllerOptions): PwaControlle
       if (notify) {
         remoteBuild = manifest.build;
         update({ pending, remoteVersion: manifest.version.replace(/^[vV]/, "") });
-        if (manifest.build !== lastNotifiedBuild) {
-          lastNotifiedBuild = manifest.build;
-          requestPrompt("version.json 嗅探命中");
-        }
+        // 每次命中都走开窗判定：已开着是空操作，「稍后」未过期由 requestPrompt 拦下
+        if (!snapshot.promptOpen) requestPrompt("version.json 嗅探命中");
       }
       return "update";
     } catch (error) {
@@ -401,6 +405,7 @@ export function createPwaController(options: PwaControllerOptions): PwaControlle
     },
     dismissPrompt() {
       dismissedBuild = remoteBuild;
+      dismissedAt = Date.now();
       update({ promptOpen: false });
     },
     reopenPrompt() {

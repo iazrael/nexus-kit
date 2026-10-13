@@ -72,7 +72,7 @@ describe("UpdateDialog", () => {
     expect(screen.getByText("检测到新版本，但暂时拿不到更新说明。")).toBeTruthy();
   });
 
-  it("立即更新 → 保存后开跑，进度文案跟随阶段，卡死给原因与强制更新出口", async () => {
+  it("立即更新 → 保存后开跑，进度文案跟随阶段，卡死给原因", async () => {
     const f = fake({});
     const save = vi.fn(async () => true);
     render(<UpdateDialog controller={f.ctl} beforeUpgrade={save} />);
@@ -84,8 +84,6 @@ describe("UpdateDialog", () => {
     expect(screen.getByText("正在切换到新版本…")).toBeTruthy();
     act(() => f.fail("downloading-stuck"));
     expect(screen.getByRole("alert").textContent).toMatch(/网络有点慢/);
-    fireEvent.click(screen.getByRole("button", { name: "强制更新" }));
-    await waitFor(() => expect(f.raw.forceUpgrade).toHaveBeenCalled());
   });
 
   it("稍后 → dismissPrompt，弹窗关闭", () => {

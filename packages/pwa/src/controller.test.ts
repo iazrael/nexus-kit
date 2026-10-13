@@ -173,7 +173,7 @@ describe("start 注册与检测链", () => {
     expect(fetchCalls()).toBe(3);
   });
 
-  it("同一构建心跳重复命中不重复开窗；新构建再开", async () => {
+  it("「稍后」后同一构建心跳重复命中不再开窗；新构建立即再开", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "setTimeout"] });
     vi.stubGlobal("fetch", respond(REMOTE_NEXT));
     const { ctl } = registered(makeRegistration(), { checkIntervalMs: 1000 });
@@ -185,6 +185,27 @@ describe("start 注册与检测链", () => {
     vi.stubGlobal("fetch", respond({ ...REMOTE_NEXT, build: 13 }));
     await vi.advanceTimersByTimeAsync(1000);
     expect(ctl.getSnapshot().promptOpen).toBe(true);
+  });
+
+  it("「稍后」有效期：24 小时内同一构建不再自动开，过期后心跳命中再提醒；有效期可配", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "setTimeout", "Date"] });
+    vi.stubGlobal("fetch", respond(REMOTE_NEXT));
+    const hour = 60 * 60 * 1000;
+    const { ctl } = registered(makeRegistration(), { checkIntervalMs: hour });
+    await vi.advanceTimersByTimeAsync(0);
+    ctl.dismissPrompt();
+    await vi.advanceTimersByTimeAsync(23 * hour);
+    expect(ctl.getSnapshot().promptOpen).toBe(false);
+    await vi.advanceTimersByTimeAsync(hour);
+    expect(ctl.getSnapshot().promptOpen).toBe(true);
+
+    const short = registered(makeRegistration(), { checkIntervalMs: 1000, dismissTtlMs: 5000 });
+    await vi.advanceTimersByTimeAsync(0);
+    short.ctl.dismissPrompt();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(short.ctl.getSnapshot().promptOpen).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(short.ctl.getSnapshot().promptOpen).toBe(true);
   });
 
   it("切前台：visibilitychange → visible 再嗅探", async () => {

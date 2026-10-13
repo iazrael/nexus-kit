@@ -1,8 +1,8 @@
 /**
  * 升级弹窗：检测到新版本时打开，列出「当前版本 → 最新版本」之间的全部更新说明。
  * 「立即更新」→ 保存钩子（有本地数据的应用在这里落盘；失败或超时留在弹窗可重试）→ 升级
- * 状态机；进度文案跟随真实阶段，不造假百分比。失败给出原因与脱困办法，并提供「强制更新」
- * 逃生口——弹窗由用户手上的旧版本渲染，这个出口必须从第一版就有。
+ * 状态机；进度文案跟随真实阶段，不造假百分比。失败给出原因与脱困办法。
+ * 「强制更新」入口由项目自己决定挂在哪（设置页、调试面板等），调 usePwaUpdate(pwa).forceUpgrade。
  */
 import type { PwaController } from "@nexus-kit/pwa";
 import { usePwaUpdate } from "@nexus-kit/pwa-react";
@@ -23,7 +23,7 @@ export interface UpdateDialogProps {
 }
 
 export function UpdateDialog({ controller, beforeUpgrade }: UpdateDialogProps) {
-  const { snapshot, confirm, dismiss, forceUpgrade, busy, saving, failReason } = usePwaUpdate(controller);
+  const { snapshot, confirm, dismiss, busy, saving, failReason } = usePwaUpdate(controller);
   const upgrading = snapshot.stage !== "idle";
   if (!snapshot.promptOpen && !upgrading && failReason === null) return null;
   const pending = snapshot.pending;
@@ -93,16 +93,7 @@ export function UpdateDialog({ controller, beforeUpgrade }: UpdateDialogProps) {
             {FAIL_TEXT[failReason]}
           </p>
         )}
-        <div className="mt-4 flex items-center justify-end gap-3">
-          {failReason !== null && !upgrading && (
-            <button
-              type="button"
-              className="mr-auto text-xs text-zinc-400 underline underline-offset-2"
-              onClick={() => void forceUpgrade(beforeUpgrade)}
-            >
-              强制更新
-            </button>
-          )}
+        <div className="mt-4 flex justify-end gap-3">
           <button type="button" className="px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-40" disabled={upgrading} onClick={dismiss}>
             稍后
           </button>

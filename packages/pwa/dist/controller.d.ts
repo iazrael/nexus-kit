@@ -8,8 +8,8 @@
  * - **prompt 制红线**：没有用户主动点击的路径不得自动 reload。刷新只发生在用户确认
  *   之后——升级弹窗点「确定」，或「强制更新」按钮点击本身即授权。
  * - **弹窗时机**由快照的 promptOpen 表达：检测命中即开；宿主可 setPromptBlocked
- *   暂缓（专注流程中不打断），解除时补开；用户「稍后」关掉的同一构建不再自动开，
- *   手动检查命中强制再开。
+ *   暂缓（专注流程中不打断），解除时补开；用户「稍后」关掉的同一构建 24 小时内不再
+ *   自动开（只存内存，重开应用即重置），新构建立即开，手动检查命中强制再开。
  * - **验证开关 `?nosw=1`**：反注册 SW + 清空 Cache Storage + 本轮不注册，实机验收拿到的
  *   永远是服务器最新构建。
  * - 依赖（registerSW、日志、离线就绪钩子）全部注入：`virtual:pwa-register` 只在宿主
@@ -42,6 +42,8 @@ export interface PwaControllerOptions {
     versionUrl?: string;
     /** 心跳间隔，默认 15 分钟 */
     checkIntervalMs?: number;
+    /** 「稍后」有效期，默认 24 小时：期内同一构建不再自动开窗，过期后心跳/切前台命中再提醒 */
+    dismissTtlMs?: number;
     /** 验证开关 URL 参数名，默认 nosw */
     noSwParam?: string;
     /** sessionStorage 键前缀（nosw 防循环重载），默认 nexus */
@@ -88,7 +90,7 @@ export interface PwaController {
     }): Promise<CheckResult>;
     /** 手动「检查更新」：判定 + 命中强制开窗（「稍后」关掉过也重开） */
     manualCheck(): Promise<CheckResult>;
-    /** 用户「稍后」：关窗，同一构建不再自动开 */
+    /** 用户「稍后」：关窗，同一构建在有效期内（默认 24 小时，重开应用即重置）不再自动开 */
     dismissPrompt(): void;
     /** 重开弹窗（「稍后」之后用户主动回来更新）：已知有更新时直接开，不重新请求网络 */
     reopenPrompt(): void;

@@ -1,6 +1,6 @@
 {
   "name": "@nexus-kit/devflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "工程流程：活文档审计、CHANGELOG 提交门禁、git hooks、部署到自有服务器（冒烟 + 自动回滚）",
   "type": "module",
   "bin": {
