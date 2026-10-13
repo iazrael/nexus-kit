@@ -4,7 +4,7 @@
  */
 import { execFileSync } from "node:child_process";
 
-const out = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", "packages/*/dist"], { encoding: "utf8" }).trim();
+const out = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ":(glob)packages/*/dist/**"], { encoding: "utf8" }).trim();
 if (out !== "") {
   console.error("[dist] packages/*/dist 与提交不一致——源码改动后重建的 dist 必须同提交：\n" + out);
   process.exit(1);
