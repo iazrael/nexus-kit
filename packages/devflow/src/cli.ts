@@ -103,8 +103,8 @@ async function worktreeCmd(argv: string[]): Promise<number> {
 [worktree] 就绪：${root}
   预览端口 ${port}（已登记到本工作树）：起服务加 --port ${port} --strictPort，端口撞了会静默连到别的检出。
   做完且验证全绿后：在本工作树 git rebase ${env.config.base} 并在变基后的代码上重新验证，
-  然后单独执行合回：nexus-devflow worktree merge ${branch}
-  确认合入成功后回收：nexus-devflow worktree rm ${root.split("/").pop() ?? branch}`);
+  然后回主仓库单独执行合回：pnpm worktree:merge ${branch}（即 nexus-devflow worktree merge）
+  确认合入成功后回收：pnpm worktree:rm ${root.split("/").pop() ?? branch}`);
       return 0;
     }
     case "merge":

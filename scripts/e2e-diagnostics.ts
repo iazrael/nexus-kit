@@ -4,8 +4,11 @@
  *   2. 刷新（会话一正常告别 → 会话二），断言上一会话的日志读回来了；
  *   3. 等日志落盘后用 CDP Page.crash 杀掉渲染进程（不会有 pagehide），新开页面（会话三）；
  *   4. 会话三里抛一个没人处理的 Promise 拒绝（消息带 ?token=secret 的 URL）；
- *   5. 按版本号的固定坐标连点 5 次（手指不会追着元素走），导出诊断文件；断言提示出现后版本号没被挤动，断言：判词为疑似异常退出、三个会话都在、会话一那段有「页面告别」、
+ *   5. 按版本号的固定坐标连点 5 次（手指不会追着元素走）打开诊断面板，点「下载诊断文件」（桌面上不弹分享）；断言提示出现后
+ *      版本号没被挤动，断言：判词为疑似异常退出、三个会话都在、会话一那段有「页面告别」、
  *      未捕获异常进了日志且 URL 的查询串已去掉。
+ *   6. 面板里点「复制全部内容」，读剪贴板，断言是完整的诊断全文；
+ *   7. 新开页面让入口代码找不到 #root（启动即抛错），断言出现整页兜底，从兜底页导出的文件记着启动失败。
  * 导出走下载兜底：测试前去掉 navigator.share，免得 headless 下弹系统分享面板卡住。
  */
 import { readFileSync } from "node:fs";
@@ -39,6 +42,7 @@ async function main(): Promise<void> {
   try {
     // 手机视口：评审在 375 宽上复现过「提示一出现把版本号挤走、按原坐标连点点空」
     const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 375, height: 667 } });
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: URL });
     await context.addInitScript(() => {
       delete (Navigator.prototype as { share?: unknown }).share;
       delete (Navigator.prototype as { canShare?: unknown }).canShare;
@@ -79,11 +83,13 @@ async function main(): Promise<void> {
     await page3.getByRole("status").filter({ hasText: "再点 2 次" }).waitFor({ timeout: 2_000 });
     const moved = await badge.boundingBox();
     expect(moved !== null && moved.x === box.x && moved.y === box.y, "进度提示出现后版本号位置不变");
+    for (let i = 0; i < 2; i++) await page3.mouse.click(x, y);
+    const panel = page3.getByRole("dialog", { name: "导出诊断信息" });
+    await panel.waitFor({ timeout: 2_000 });
+    log("连点 5 次打开了诊断面板");
     const [download] = await Promise.all([
       page3.waitForEvent("download", { timeout: 10_000 }),
-      (async () => {
-        for (let i = 0; i < 2; i++) await page3.mouse.click(x, y);
-      })(),
+      panel.getByRole("button", { name: "下载诊断文件" }).click(),
     ]);
     const path = await download.path();
     const text = readFileSync(path, "utf8");
@@ -98,8 +104,34 @@ async function main(): Promise<void> {
     expect(text.includes("[error] 未处理的 Promise 拒绝：拉取 https://api.test/v1/me 失败"), "未捕获异常进了日志，URL 保留来源与路径");
     expect(!text.includes("secret"), "诊断文件里没有 URL 查询串里的凭证");
     expect(text.includes("WARN  [lifecycle] 上一局疑似异常退出"), "会话三启动时记下了疑似异常");
-    await page3.getByRole("status").filter({ hasText: "已开始下载诊断文件" }).waitFor({ timeout: 5_000 });
-    log("通过：日志跨会话保留 → 杀进程后判疑似异常 → 连点导出诊断文件");
+    await panel.getByRole("status").filter({ hasText: "已开始下载" }).waitFor({ timeout: 5_000 });
+
+    await panel.getByRole("button", { name: "复制全部内容" }).click();
+    await panel.getByRole("status").filter({ hasText: "已复制" }).waitFor({ timeout: 5_000 });
+    const copied = await page3.evaluate(() => navigator.clipboard.readText());
+    expect(copied.startsWith("# 诊断日志") && copied.includes("## 上次退出") && copied.includes("## 日志"), "复制到剪贴板的是完整诊断全文");
+    await panel.getByRole("button", { name: "关闭" }).click();
+
+    // 白屏兜底：让入口代码拿不到 #root，启动即抛错
+    const page4 = await context.newPage();
+    await page4.addInitScript(() => {
+      const original = Document.prototype.getElementById;
+      Document.prototype.getElementById = function (id: string) {
+        return id === "root" ? null : original.call(this, id);
+      };
+    });
+    await page4.goto(URL);
+    const fallback = page4.getByRole("dialog", { name: "应用出错了" });
+    await fallback.waitFor({ timeout: 10_000 });
+    log("启动失败时出现了整页兜底");
+    const [crashDownload] = await Promise.all([
+      page4.waitForEvent("download", { timeout: 10_000 }),
+      fallback.getByRole("button", { name: "下载诊断文件" }).click(),
+    ]);
+    const crashText = readFileSync(await crashDownload.path(), "utf8");
+    expect(crashText.includes("应用没能启动") && crashText.includes("index.html 缺 #root"), "兜底页导出的诊断文件记着启动失败原因");
+    expect(await fallback.getByRole("button", { name: "重新加载" }).isVisible(), "兜底页提供重新加载");
+    log("通过：日志跨会话保留 → 杀进程后判疑似异常 → 连点打开面板导出与复制 → 白屏兜底可导出");
   } finally {
     await browser.close();
     server.close();
