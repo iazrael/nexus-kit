@@ -1,3 +1,5 @@
+import { parseTaskConfig } from "./task/config.ts";
+import type { TaskConfig } from "./task/types.ts";
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
  * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
@@ -73,6 +75,7 @@ export interface NexusConfig {
   deploy: DeployConfig | null;
   worktree: WorktreeConfig;
   release: ReleaseConfig;
+  task: TaskConfig | null;
 }
 
 export const CONFIG_FILE = "nexus.config.json";
@@ -232,6 +235,7 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
     deploy,
     worktree,
     release,
+    task: raw.task === undefined ? null : parseTaskConfig(raw.task),
   };
 }
 

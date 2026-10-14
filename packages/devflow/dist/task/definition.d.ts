@@ -1,0 +1,21 @@
+import type { TaskConfig, TaskSpec, TaskDefinition } from "./types.ts";
+export declare const states: string[];
+export { check, text, command, number, safePath, inside, json } from "./validation.ts";
+export declare function idOf(id: unknown): string;
+export declare function sha(value: string): string;
+export declare function fingerprint(path: string): string;
+export declare function config(root: string): TaskConfig;
+export declare function writeJson(path: string, value: unknown): void;
+export declare function taskFile(root: string, cfg: TaskConfig, id: string): string;
+export declare function taskText(root: string, cfg: TaskConfig, id: string): string;
+export declare function header(content: string, name: string): string;
+export declare function setHeader(content: string, name: string, value: string): string;
+export declare function record(content: string, message: string): string;
+export declare function newTask(root: string, cfg: TaskConfig, id: string, title: string): {
+    task: string;
+    id: string;
+    status: string;
+};
+export declare function nonce(): string;
+export declare function readTask(root: string, cfg: TaskConfig, id: string, complete?: boolean): TaskDefinition;
+export declare function parseSpec(raw: unknown, root: string, cfg: TaskConfig, id: string): TaskSpec;

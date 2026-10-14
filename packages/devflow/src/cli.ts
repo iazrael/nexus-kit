@@ -34,7 +34,7 @@ function listMarkdown(dir: string): string[] {
   return out;
 }
 
-const USAGE = "用法：nexus-devflow <docs-audit|check-changelog|install-hooks|deploy|worktree|release>";
+const USAGE = "用法：nexus-devflow <docs-audit|check-changelog|install-hooks|deploy|worktree|release|task>";
 
 const WORKTREE_USAGE = `用法：
   nexus-devflow worktree new <分支名> [--from=<起点>] [--isolate=<共享项,共享项>]
@@ -267,6 +267,14 @@ async function main(cmd: string | undefined): Promise<number> {
         },
       );
       return 0;
+    }
+    case "task": {
+      const { taskCommand } = await import("./task/cli.ts");
+      try {
+        return await taskCommand(process.argv.slice(3));
+      } catch (e) {
+        throw new Error(`[task] ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+      }
     }
     case "worktree":
       return worktreeCmd(process.argv.slice(3));

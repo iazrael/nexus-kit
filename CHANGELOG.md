@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+- 新增：devflow 的 `task new|dispatch|start|status|resume|rework|verify|accept`，取材 旧项目C 的真实任务管线。宿主使用可选 task 配置，任务树独立配置目录和准备命令；agy 原会话续跑、失败留档、独立复跑与提交绑定验收。
+- 新增：任务状态分别展示最近进程、最近复跑和正式验收；任务树回收后明确历史已集成或当前无法对账。
+- 内部：真实子进程任务集成测试与 c8 四项覆盖率门禁纳入 check，需求、架构、规范与可选接入示例同步。
+
 ## [0.6.0] - 2026-10-14
 
 - 新增：`@nexus-kit/runtime/assets` 图像资源。`createLoader`：加载调度器，任务按档位（0 挡门 / 1 可见 / 2 附近 / 3 空闲）与次序值排队，在飞的不打断，并发上限默认 6；同一 key（通常是 URL）在飞或排队时共用结果、不发第二次；每次调用可带 AbortSignal，全部取消且还在排队才出队；`hold` 关键闸门在关键资源有结论或封顶时限前压住档位 2、3。`createImageCache`：下载并解码成 ImageBitmap，引用计数持有，引用为零进 LRU，超预算淘汰时立即 `close()` 并通知宿主；失败不进缓存。`mapLimit`（限并发、按序返回）与 `whenIdle`（空闲执行，老 iOS 退定时器）。传入 `perf` 时登记 `assets.bitmapMB`、`assets.bitmaps`、`assets.queued`、`assets.running` 进水位长线。

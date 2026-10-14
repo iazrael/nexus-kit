@@ -1,3 +1,4 @@
+import { parseTaskConfig } from "./task/config.js";
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
  * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
@@ -172,6 +173,7 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
         deploy,
         worktree,
         release,
+        task: raw.task === undefined ? null : parseTaskConfig(raw.task),
     };
 }
 /** 从 cwd 向上找 nexus.config.json；找不到抛错 */

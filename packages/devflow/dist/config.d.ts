@@ -1,3 +1,4 @@
+import type { TaskConfig } from "./task/types.ts";
 export interface DeployConfig {
     /** ssh 目标，如 root@1.2.3.4 */
     target: string;
@@ -67,6 +68,7 @@ export interface NexusConfig {
     deploy: DeployConfig | null;
     worktree: WorktreeConfig;
     release: ReleaseConfig;
+    task: TaskConfig | null;
 }
 export declare const CONFIG_FILE = "nexus.config.json";
 export declare const DEFAULT_PRIVATE_REQUIRED: string[];

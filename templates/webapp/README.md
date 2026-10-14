@@ -11,3 +11,5 @@ pnpm release --ack           # 发版：检查 → 构建 → 部署 → 打 tag
 ```
 
 开发规则与文档索引见 [CLAUDE.md](CLAUDE.md)。
+
+需要多 Agent 任务协作时，按 nexus-kit 的[任务接入规范](https://github.com/iazrael/nexus-kit/blob/main/docs/规范/接入规范.md)配置 nexus.config.json 的 task 段，并使用 `nexus-devflow task`。模板不预设执行模型，不默认启动任务。
