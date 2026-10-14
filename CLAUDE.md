@@ -45,11 +45,13 @@
 - TypeScript strict 全开、ESM only、禁 `any`，外部数据先 unknown 后校验。
 - pwa、runtime 零框架依赖；pwa-react 不写样式；包间只用 peerDependencies。
 - `packages/*/dist` 入库，与源码同提交（`pnpm dist:check` 拦截）。
-- 常用命令：`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链与日志诊断）、
+- 常用命令：`pnpm worktree:new|merge|rm|ls`（并行开发，见交付规范 §5）、`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链与日志诊断）、
   `pnpm init-app <目录>`（生成新项目）、`pnpm test:coverage`。
 
 ## 3. 工作流
 
+- 开工先 `pnpm worktree:new <分支名>` 建工作树，在树里改、验证、评审；做完 `git rebase main`、重新验证，回主仓库单独
+  执行 `pnpm worktree:merge <分支名>`，确认成功后 `pnpm worktree:rm <名称>`。不在主仓库直接改，不用 `git stash`。
 - 改动超过 3 个文件且触及正式代码，先出计划等批准；纯文档/测试/一次性脚本直接做、做完如实汇报。
 - 有明确输入输出的逻辑先写测试；bug 先用失败测试钉住并登记坑账。
 - 代码写完用独立 reviewer 审一遍再提交；改了模板里用户可见的行为（弹窗文案、交互）加产品评审。
