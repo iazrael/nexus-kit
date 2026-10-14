@@ -3,7 +3,7 @@ import { newTask, check, idOf } from "./definition.ts";
 import { context, start, status, dispatch, resume, supervise, verify, accept, rework, shortStatus } from "./runtime.ts";
 import { text } from "./validation.ts";
 const usage =
-  "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
+  "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
 export async function taskCommand(argv: string[]): Promise<number> {
   let [sub, ...args] = argv;
   if (sub === "--help" || sub === "-h") {
@@ -24,6 +24,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
       "run-dir": { type: "string" },
       "message-file": { type: "string" },
       review: { type: "string" },
+      "main-review": { type: "string" },
       "refresh-definition": { type: "boolean" },
     },
   });
@@ -37,7 +38,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
     status: ["short"],
     dispatch: ["dry-run", "detach", "refresh-definition"],
     resume: ["conversation", "detach", "refresh-definition"],
-    verify: [],
+    verify: ["main-review"],
     accept: ["review"],
     rework: ["message-file"],
     _supervise: ["run-dir"],
@@ -78,7 +79,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
       });
       break;
     case "verify":
-      result = await verify(ctx, key);
+      result = await verify(ctx, key, values["main-review"]);
       break;
     case "rework":
       result = rework(ctx, key, text(values["message-file"], "返工说明 --message-file"));

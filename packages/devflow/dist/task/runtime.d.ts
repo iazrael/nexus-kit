@@ -1,5 +1,5 @@
 import type { TaskContext, LaunchResult, RunOptions, RunInfo, Accepted, TaskStatus } from "./types.ts";
-export declare function git(root: string, ...args: string[]): string;
+export { git } from "./io.ts";
 export declare function context(cwd?: string): TaskContext;
 export declare function start(ctx: TaskContext, id: string, owner: string): {
     id: string;
@@ -146,7 +146,7 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     taskStatus?: string;
 }>;
 export declare function supervise(ctx: TaskContext, id: string, directory: string): Promise<RunInfo>;
-export declare function verify(ctx: TaskContext, id: string): Promise<{
+export declare function verify(ctx: TaskContext, id: string, mainReview?: string): Promise<{
     receipt: string;
     id: string;
     passed: boolean;
@@ -157,6 +157,10 @@ export declare function verify(ctx: TaskContext, id: string): Promise<{
     commit?: string;
     changed?: string[];
     outputs?: Record<string, string>;
+    mainAudits?: {
+        file: string;
+        sha256: string;
+    }[];
     error?: string;
     endedAt?: string;
 }>;

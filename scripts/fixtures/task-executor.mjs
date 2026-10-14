@@ -1,6 +1,6 @@
 // External process fixture: exercises the same CLI and Git operations an agent uses.
 import { spawnSync, spawn } from "node:child_process";
-import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 function run(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
@@ -62,6 +62,29 @@ if (scenario === "orphan") {
     process.exit(7);
   }
   if (scenario === "slow-delivery") await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (scenario === "main-write" || scenario === "main-commit") {
+    writeFileSync(join(root, ".gitignore"), readFileSync(join(root, ".gitignore"), "utf8") + "# main changed\n");
+    if (scenario === "main-commit") {
+      run("git", ["add", ".gitignore"], root);
+      run("git", ["commit", "-m", "main contamination"], root);
+    }
+  }
+  if (scenario === "main-child-write") {
+    const ready = join(root, "research/local/audit-child-ready");
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `const fs=require('fs');process.on('SIGTERM',()=>{fs.appendFileSync(${JSON.stringify(join(root, ".gitignore"))}, '# child changed main\\n');process.exit(0)});fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`,
+      ],
+      { stdio: "ignore" },
+    ).unref();
+    const deadline = Date.now() + 5000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("audit child did not become ready");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
   const wt = started.worktree,
     file = join(wt, `tasks/${id}.md`);
   writeFileSync(join(wt, "artifact.txt"), "cancel-ok");

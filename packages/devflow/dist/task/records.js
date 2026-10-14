@@ -86,6 +86,14 @@ export function readVerification(file) {
         sha(v.stdoutSha256, "stdoutSha256", 64);
         sha(v.stderrSha256, "stderrSha256", 64);
     }
+    if (o.mainAudits !== undefined) {
+        check(Array.isArray(o.mainAudits), "mainAudits 必须为数组");
+        for (const value of o.mainAudits) {
+            const item = object(value, "主仓审计引用");
+            text(item.file, "主仓审计文件");
+            sha(item.sha256, "主仓审计 sha256", 64);
+        }
+    }
     if (o.outputs !== undefined) {
         const outputs = object(o.outputs, "outputs");
         for (const v of Object.values(outputs))

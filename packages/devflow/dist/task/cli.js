@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { newTask, check, idOf } from "./definition.js";
 import { context, start, status, dispatch, resume, supervise, verify, accept, rework, shortStatus } from "./runtime.js";
 import { text } from "./validation.js";
-const usage = "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
+const usage = "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
 export async function taskCommand(argv) {
     let [sub, ...args] = argv;
     if (sub === "--help" || sub === "-h") {
@@ -23,6 +23,7 @@ export async function taskCommand(argv) {
             "run-dir": { type: "string" },
             "message-file": { type: "string" },
             review: { type: "string" },
+            "main-review": { type: "string" },
             "refresh-definition": { type: "boolean" },
         },
     });
@@ -36,7 +37,7 @@ export async function taskCommand(argv) {
         status: ["short"],
         dispatch: ["dry-run", "detach", "refresh-definition"],
         resume: ["conversation", "detach", "refresh-definition"],
-        verify: [],
+        verify: ["main-review"],
         accept: ["review"],
         rework: ["message-file"],
         _supervise: ["run-dir"],
@@ -79,7 +80,7 @@ export async function taskCommand(argv) {
             });
             break;
         case "verify":
-            result = await verify(ctx, key);
+            result = await verify(ctx, key, values["main-review"]);
             break;
         case "rework":
             result = rework(ctx, key, text(values["message-file"], "返工说明 --message-file"));

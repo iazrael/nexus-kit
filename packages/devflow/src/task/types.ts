@@ -125,6 +125,7 @@ export interface Verification {
   commit?: string;
   changed?: string[];
   outputs?: Record<string, string>;
+  mainAudits?: { file: string; sha256: string }[];
   error?: string;
   endedAt?: string;
 }

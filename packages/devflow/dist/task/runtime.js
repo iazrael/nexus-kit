@@ -1,21 +1,21 @@
+import { git, atomic } from "./io.js";
 import { loadNexusConfig } from "../config.js";
 import { worktreeNew } from "../worktree.js";
 import { systemProcessProbe } from "../worktree-procs.js";
 import { taskWorktree } from "./config.js";
+import { assertMainClean, beginMainAudit, finishMainAudit, reviewMainAudits, assertMainAuditsReviewed, mainAuditManifest, } from "./main-audit.js";
 import { errorMessage, errorCode } from "./validation.js";
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.js";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { agySessions, agyResult, agyInvocation } from "./agy.js";
-import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync, rmSync, cpSync, openSync, closeSync, chmodSync, lstatSync, } from "node:fs";
+import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, cpSync, openSync, closeSync, chmodSync, lstatSync, } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, config, safePath, readTask, taskFile, header, setHeader, record, writeJson, sha, fingerprint, nonce, text, inside, } from "./definition.js";
 function toolCli() {
     return fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "../cli.ts" : "../cli.js", import.meta.url));
 }
-export function git(root, ...args) {
-    return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
+export { git } from "./io.js";
 export function context(cwd = process.cwd()) {
     const root = realpathSync(git(cwd, "rev-parse", "--show-toplevel"));
     const common = realpathSync(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
@@ -27,12 +27,6 @@ function inputFile(ctx, path) {
 }
 function control(ctx, id) {
     return safePath(ctx.mainRoot, `${ctx.cfg.controlDir}/${id}`);
-}
-function atomic(path, value) {
-    mkdirSync(dirname(path), { recursive: true });
-    const temp = `${path}.${nonce()}.tmp`;
-    writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
-    renameSync(temp, path);
 }
 function snapshotPath(ctx, id) {
     return join(control(ctx, id), "definition.json");
@@ -258,6 +252,9 @@ function verificationInfo(ctx, id, head) {
 }
 function assertReceiptIntegrity(ctx, receipt) {
     check(receipt.passed, "正式验收引用的独立验证未通过");
+    for (const audit of receipt.mainAudits ?? []) {
+        check(fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, audit.file))) === audit.sha256, "主仓审计或核对记录指纹变化");
+    }
     const output = safePath(ctx.mainRoot, relative(ctx.mainRoot, receipt.output));
     check(JSON.stringify(outputManifest(output)) === JSON.stringify(receipt.outputs), "独立复跑产物指纹变化");
     check(receipt.commands.length > 0 && receipt.commands.every((cmd) => cmd.exitCode === 0 && !cmd.timedOut), "验证命令记录不完整或失败");
@@ -423,6 +420,7 @@ async function waitForRun(ctx, run) {
 function launch(ctx, id, resuming, options) {
     return lock(ctx, id, () => {
         noRunning(ctx, id);
+        assertMainClean(ctx.mainRoot);
         const snap = options.refreshDefinition ? prepare(ctx, id, true) : resuming ? loadSnapshot(ctx, id) : prepare(ctx, id);
         const wt = worktree(ctx, snap);
         const task = checkDefinition(ctx, snap, existsSync(wt) ? wt : snap.sourceRoot);
@@ -459,6 +457,8 @@ function launch(ctx, id, resuming, options) {
             budgetReached: false,
             hardTimeout: false,
         };
+        const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), resuming ? "resume" : "dispatch");
+        atomic(join(runDir, "main-audit.json"), { file: mainAudit });
         atomic(join(runDir, "run.json"), info);
         atomic(join(control(ctx, id), "latest.json"), { directory });
         writeFileSync(join(runDir, "prompt.txt"), promptFor(ctx, snap, resuming), { flag: "wx" });
@@ -642,6 +642,22 @@ export async function supervise(ctx, id, directory) {
             closeSync(out);
         if (err !== undefined)
             closeSync(err);
+        try {
+            const auditFile = readPointer(join(runDir, "main-audit.json")).file;
+            check(dirname(auditFile) === join(control(ctx, id), "main-audit"), "主仓审计路径不匹配");
+            try {
+                finishMainAudit(ctx.mainRoot, auditFile);
+            }
+            finally {
+                if (existsSync(auditFile))
+                    atomic(join(runDir, "main-audit.json"), { file: auditFile, sha256: fingerprint(auditFile) });
+            }
+        }
+        catch (auditError) {
+            info.state = "failed";
+            info.error = [info.error, errorMessage(auditError)].filter(Boolean).join("；");
+            process.exitCode = 1;
+        }
         info.endedAt = new Date().toISOString();
         save();
     }
@@ -683,7 +699,7 @@ function delivery(ctx, snap) {
         safePath(wt, path);
     return { wt, task, commit, changed };
 }
-export async function verify(ctx, id) {
+export async function verify(ctx, id, mainReview) {
     return lock(ctx, id, async () => {
         noRunning(ctx, id);
         const snap = loadSnapshot(ctx, id), directory = nonce(), output = join(control(ctx, id), "verifications", directory);
@@ -692,7 +708,11 @@ export async function verify(ctx, id) {
         atomic(file, result);
         atomic(join(control(ctx, id), "latest-verify.json"), { file });
         try {
+            assertMainClean(ctx.mainRoot);
             const { wt, commit, changed } = delivery(ctx, snap);
+            if (mainReview)
+                reviewMainAudits(control(ctx, id), inputFile(ctx, mainReview));
+            assertMainAuditsReviewed(control(ctx, id));
             result.commit = commit;
             result.changed = changed;
             for (const [index, entry] of snap.spec.verify.entries()) {
@@ -700,10 +720,20 @@ export async function verify(ctx, id) {
                 mkdirSync(commandOutput);
                 const argv = entry.argv.map((arg) => arg.replaceAll("{output}", commandOutput));
                 const stdout = join(output, `${index}.stdout.log`), stderr = join(output, `${index}.stderr.log`);
+                const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), `verify:${entry.name}`);
                 const out = openSync(stdout, "wx"), err = openSync(stderr, "wx");
                 let run;
                 try {
                     run = await runCommand(argv, wt, { ...process.env, TASK_VERIFY_OUTPUT: commandOutput }, out, err, (entry.timeoutSeconds ?? 300) * 1000);
+                }
+                catch (runError) {
+                    try {
+                        finishMainAudit(ctx.mainRoot, mainAudit);
+                    }
+                    catch (auditError) {
+                        throw new Error(`${errorMessage(runError)}；${errorMessage(auditError)}`, { cause: auditError });
+                    }
+                    throw runError;
                 }
                 finally {
                     closeSync(out);
@@ -722,11 +752,13 @@ export async function verify(ctx, id) {
                     error: run.error ?? null,
                 });
                 atomic(file, result);
+                finishMainAudit(ctx.mainRoot, mainAudit);
                 check(run.exitCode === 0 && !run.timedOut && !run.cancelled, `验证命令失败：${entry.name}；${run.timedOut ? "期限已到（超时）" : run.cancelled ? "协调者中断" : "退出码 " + run.exitCode}；错误 ${run.error ?? readFileSync(stderr, "utf8")}；记录 ${file}`);
                 check(git(wt, "rev-parse", "HEAD") === commit, "验证命令改变了交付提交");
                 check(git(wt, "status", "--porcelain") === "", "验证命令修改了受跟踪文件或生成未提交文件");
                 checkInputs(wt, snap.spec);
             }
+            result.mainAudits = mainAuditManifest(control(ctx, id));
             result.outputs = outputManifest(output);
             result.passed = true;
         }
@@ -762,6 +794,8 @@ export function accept(ctx, id, reviewPath) {
     text(reviewPath, "独立审查记录 --review");
     return lock(ctx, id, () => {
         noRunning(ctx, id);
+        assertMainClean(ctx.mainRoot);
+        assertMainAuditsReviewed(control(ctx, id));
         const snap = loadSnapshot(ctx, id), { wt, task, commit } = delivery(ctx, snap);
         const pointer = join(control(ctx, id), "latest-verify.json");
         check(existsSync(pointer), "缺少独立验证材料");

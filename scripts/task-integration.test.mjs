@@ -1,7 +1,7 @@
 import { createHash as cryptoHash } from "node:crypto";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, realpathSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, realpathSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1232,4 +1232,208 @@ test("前置树索引隐藏的未提交内容不能借已验收 HEAD 绕过派�
     assert.equal(result.status, 1);
     assert.match(result.stderr, /索引.*忽略/);
   }
+});
+
+// 主仓审计通过公开 CLI 覆盖，不把任务树白名单当成主仓隔离。
+for (const kind of ["working", "staged", "assume-unchanged", "skip-worktree"]) {
+  test(`主仓审计：verify 拒绝 ${kind}，不清理现场`, () => {
+    const root = repo();
+    delivered(root);
+    writeFileSync(join(root, ".gitignore"), "changed-main");
+    if (kind === "staged") git(root, "add", ".gitignore");
+    if (kind === "assume-unchanged" || kind === "skip-worktree") git(root, "update-index", `--${kind}`, ".gitignore");
+    const result = run(root, "verify", "cancel-buy");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /主仓/);
+    assert.equal(readFileSync(join(root, ".gitignore"), "utf8"), "changed-main");
+  });
+}
+for (const command of ["dispatch", "resume"]) {
+  test(`主仓审计：${command} 启动前拒绝主仓受跟踪改动`, () => {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    if (command === "resume") success(run(root, "start", "cancel-buy", "--owner", "fixture"));
+    writeFileSync(join(root, ".gitignore"), "dirty-main");
+    const result = run(root, command, "cancel-buy", ...(command === "resume" ? ["--conversation", "fixture-session"] : []));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /主仓/);
+  });
+}
+function mainAuditFiles(root) {
+  const dir = join(root, "research/local/task-control/cancel-buy/main-audit");
+  return { dir, files: existsSync(dir) ? readdirSync(dir).filter((p) => p.endsWith(".json")) : [] };
+}
+function mainReview(root) {
+  const { dir, files } = mainAuditFiles(root);
+  const incidents = files
+    .filter((file) => !JSON.parse(readFileSync(join(dir, file))).passed)
+    .map((id) => ({
+      id,
+      sha256: cryptoHash("sha256")
+        .update(readFileSync(join(dir, id)))
+        .digest("hex"),
+    }));
+  const file = join(root, "main-review.json");
+  writeFileSync(file, JSON.stringify({ reviewer: "coordinator", reason: "核对主仓改动，确认内容保留", incidents }));
+  return file;
+}
+for (const scenario of ["main-write", "main-commit", "main-child-write"]) {
+  test(`主仓审计：执行 ${scenario} 留证，后续提交不能抹去，核对后可保留内容`, async () => {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    success(detachedScenario(root, scenario, "dispatch", "cancel-buy"));
+    const done = await finished(root);
+    assert.equal(done.run.state, "failed");
+    assert.match(done.run.error, /主仓/);
+    if (scenario !== "main-commit") {
+      git(root, "add", ".gitignore");
+      git(root, "commit", "-m", "coordinator registration includes contamination");
+    }
+    assert.equal(git(root, "status", "--porcelain"), "");
+    const rejected = run(root, "verify", "cancel-buy");
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /主仓.*审计/);
+    const { dir, files } = mainAuditFiles(root);
+    assert.equal(files.length, 1);
+    const evidence = JSON.parse(readFileSync(join(dir, files[0]), "utf8"));
+    assert.equal(evidence.passed, false);
+    assert.ok(evidence.paths.includes(".gitignore"));
+    const record = mainReview(root);
+    const invalid = JSON.parse(readFileSync(record));
+    invalid.incidents[0].sha256 = "0".repeat(64);
+    writeFileSync(record, JSON.stringify(invalid));
+    assert.notEqual(run(root, "verify", "cancel-buy", "--main-review", record).status, 0);
+    const verified = success(run(root, "verify", "cancel-buy", "--main-review", mainReview(root)));
+    assert.equal(verified.passed, true);
+    assert.equal(JSON.parse(readFileSync(join(dir, files[0]), "utf8")).passed, false);
+    const head = git(join(root, ".worktrees/cancel-buy"), "rev-parse", "HEAD");
+    success(run(root, "accept", "cancel-buy", "--review", review(root, head)));
+  });
+}
+test("主仓审计：验证命令修改主仓并提交也拒绝，恢复干净仍保留异常", () => {
+  const root = repo();
+  ready(root);
+  editTask(root, (s) => {
+    s.verify[0].argv = [
+      process.execPath,
+      "-e",
+      `const fs=require('fs'),cp=require('child_process');fs.appendFileSync(${JSON.stringify(join(root, ".gitignore"))}, '# verify wrote main\\n');cp.execFileSync('git',['add','.gitignore'],{cwd:${JSON.stringify(root)}});cp.execFileSync('git',['commit','-m','verify contamination'],{cwd:${JSON.stringify(root)}});`,
+    ];
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "verify setup");
+  success(run(root, "start", "cancel-buy", "--owner", "fixture"));
+  const wt = join(root, ".worktrees/cancel-buy");
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(taskPath(wt), readFileSync(taskPath(wt), "utf8").replace(/^> 状态：.*$/m, "> 状态：待验收"));
+  git(wt, "add", ".");
+  git(wt, "commit", "-m", "delivery");
+  const result = run(root, "verify", "cancel-buy");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /主仓/);
+  assert.equal(git(root, "status", "--porcelain"), "");
+  assert.notEqual(run(root, "verify", "cancel-buy").status, 0);
+});
+test("主仓审计：验收拒绝验证后的主仓改动，未跟踪核对文件允许存在", () => {
+  const root = repo(),
+    wt = delivered(root);
+  success(run(root, "verify", "cancel-buy"));
+  const record = review(root, git(wt, "rev-parse", "HEAD"));
+  writeFileSync(join(root, ".gitignore"), "changed after verify");
+  const result = run(root, "accept", "cancel-buy", "--review", record);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /主仓/);
+  git(root, "checkout", "--", ".gitignore");
+  success(run(root, "accept", "cancel-buy", "--review", record));
+});
+
+test("主仓审计：resume 越权也留证，核对不得绕过未恢复的主仓现场", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(detachedScenario(root, "blocked", "dispatch", "cancel-buy"));
+  await finished(root);
+  success(detachedScenario(root, "main-write", "resume", "cancel-buy"));
+  const done = await finished(root);
+  assert.equal(done.run.state, "failed");
+  assert.match(done.run.error, /主仓/);
+  assert.notEqual(run(root, "verify", "cancel-buy", "--main-review", mainReview(root)).status, 0);
+  git(root, "checkout", "--", ".gitignore");
+  success(run(root, "verify", "cancel-buy", "--main-review", mainReview(root)));
+});
+test("主仓审计：通过材料绑定审计和核对记录指纹，删除审计不能验收", () => {
+  const root = repo(),
+    wt = delivered(root);
+  const verified = success(run(root, "verify", "cancel-buy"));
+  assert.ok(verified.mainAudits.length > 0);
+  const audit = verified.mainAudits[0];
+  rmSync(audit.file);
+  const result = run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD")));
+  assert.notEqual(result.status, 0);
+});
+test("主仓审计：只暂存和带换行路径的改动按路径记录", async () => {
+  const root = repo();
+  const path = "special\ntracked.txt";
+  writeFileSync(join(root, path), "old");
+  git(root, "add", ".");
+  git(root, "commit", "-m", "special path");
+  ready(root);
+  executorConfig(root);
+  const launched = success(detachedScenario(root, "slow-delivery", "dispatch", "cancel-buy"));
+  writeFileSync(join(root, path), "new");
+  git(root, "add", "--", path);
+  writeFileSync(join(root, path), "old");
+  const done = await finished(root);
+  assert.equal(done.run.state, "failed");
+  const { dir, files } = mainAuditFiles(root);
+  assert.ok(files.some((id) => JSON.parse(readFileSync(join(dir, id))).paths?.includes(path)));
+  assert.ok(existsSync(join(launched.runDir, "run.json")));
+});
+
+test("主仓审计：删除复跑异常不能把下一次验证变成无异常", () => {
+  const root = repo();
+  ready(root);
+  editTask(root, (s) => {
+    const marker = join(root, "research/local/verify-once");
+    s.verify[0].argv = [
+      process.execPath,
+      "-e",
+      `const fs=require('fs'),cp=require('child_process');if(!fs.existsSync(${JSON.stringify(marker)})){fs.writeFileSync(${JSON.stringify(marker)},'once');fs.appendFileSync(${JSON.stringify(join(root, ".gitignore"))},'# verify wrote main\\n');cp.execFileSync('git',['add','.gitignore'],{cwd:${JSON.stringify(root)}});cp.execFileSync('git',['commit','-m','main write'],{cwd:${JSON.stringify(root)}})}`,
+    ];
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "one-time verifier");
+  success(run(root, "start", "cancel-buy", "--owner", "fixture"));
+  const wt = join(root, ".worktrees/cancel-buy");
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(taskPath(wt), readFileSync(taskPath(wt), "utf8").replace(/^> 状态：.*$/m, "> 状态：待验收"));
+  git(wt, "add", ".");
+  git(wt, "commit", "-m", "delivery");
+  assert.notEqual(run(root, "verify", "cancel-buy").status, 0);
+  const { dir, files } = mainAuditFiles(root);
+  assert.equal(files.length, 1);
+  rmSync(join(dir, files[0]));
+  const result = run(root, "verify", "cancel-buy");
+  assert.notEqual(result.status, 0, "删除异常不应解除验收门禁");
+});
+test("主仓审计：已核对记录不能被后续拒绝的 verify 覆盖", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(detachedScenario(root, "main-commit", "dispatch", "cancel-buy"));
+  await finished(root);
+  const mainRecord = mainReview(root);
+  const verified = success(run(root, "verify", "cancel-buy", "--main-review", mainRecord));
+  const wt = join(root, ".worktrees/cancel-buy");
+  success(run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD"))));
+  const bound = verified.mainAudits.find((entry) => entry.file.includes("/reviews/"));
+  const original = readFileSync(bound.file, "utf8");
+  const changed = JSON.parse(readFileSync(mainRecord, "utf8"));
+  changed.reason = "different reason";
+  writeFileSync(mainRecord, JSON.stringify(changed));
+  assert.notEqual(run(root, "verify", "cancel-buy", "--main-review", mainRecord).status, 0);
+  assert.equal(readFileSync(bound.file, "utf8"), original, "正式验收引用的核对记录不能被覆盖");
+  assert.equal(success(run(root, "status", "cancel-buy")).tasks[0].acceptance.passed, true);
 });

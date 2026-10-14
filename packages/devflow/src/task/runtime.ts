@@ -1,3 +1,4 @@
+import { git, atomic } from "./io.ts";
 import type {
   TaskContext,
   Snapshot,
@@ -17,6 +18,14 @@ import { loadNexusConfig } from "../config.ts";
 import { worktreeNew } from "../worktree.ts";
 import { systemProcessProbe } from "../worktree-procs.ts";
 import { taskWorktree } from "./config.ts";
+import {
+  assertMainClean,
+  beginMainAudit,
+  finishMainAudit,
+  reviewMainAudits,
+  assertMainAuditsReviewed,
+  mainAuditManifest,
+} from "./main-audit.ts";
 import { errorMessage, errorCode } from "./validation.ts";
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.ts";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
@@ -28,7 +37,6 @@ import {
   writeFileSync,
   mkdirSync,
   readdirSync,
-  renameSync,
   rmSync,
   cpSync,
   openSync,
@@ -59,9 +67,7 @@ function toolCli(): string {
   return fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "../cli.ts" : "../cli.js", import.meta.url));
 }
 
-export function git(root: string, ...args: string[]) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
+export { git } from "./io.ts";
 export function context(cwd = process.cwd()): TaskContext {
   const root = realpathSync(git(cwd, "rev-parse", "--show-toplevel"));
   const common = realpathSync(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
@@ -73,12 +79,6 @@ function inputFile(ctx: TaskContext, path: string) {
 }
 function control(ctx: TaskContext, id: string) {
   return safePath(ctx.mainRoot, `${ctx.cfg.controlDir}/${id}`);
-}
-function atomic(path: string, value: unknown) {
-  mkdirSync(dirname(path), { recursive: true });
-  const temp = `${path}.${nonce()}.tmp`;
-  writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
-  renameSync(temp, path);
 }
 function snapshotPath(ctx: TaskContext, id: string) {
   return join(control(ctx, id), "definition.json");
@@ -321,6 +321,9 @@ function verificationInfo(ctx: TaskContext, id: string, head: string | null): Ve
 
 function assertReceiptIntegrity(ctx: TaskContext, receipt: Verification): void {
   check(receipt.passed, "正式验收引用的独立验证未通过");
+  for (const audit of receipt.mainAudits ?? []) {
+    check(fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, audit.file))) === audit.sha256, "主仓审计或核对记录指纹变化");
+  }
   const output = safePath(ctx.mainRoot, relative(ctx.mainRoot, receipt.output));
   check(JSON.stringify(outputManifest(output)) === JSON.stringify(receipt.outputs), "独立复跑产物指纹变化");
   check(receipt.commands.length > 0 && receipt.commands.every((cmd) => cmd.exitCode === 0 && !cmd.timedOut), "验证命令记录不完整或失败");
@@ -488,6 +491,7 @@ async function waitForRun(ctx: TaskContext, run: LaunchResult) {
 function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOptions): LaunchResult {
   return lock(ctx, id, () => {
     noRunning(ctx, id);
+    assertMainClean(ctx.mainRoot);
     const snap = options.refreshDefinition ? prepare(ctx, id, true) : resuming ? loadSnapshot(ctx, id) : prepare(ctx, id);
     const wt = worktree(ctx, snap);
     const task = checkDefinition(ctx, snap, existsSync(wt) ? wt : snap.sourceRoot);
@@ -526,6 +530,8 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
       budgetReached: false,
       hardTimeout: false,
     };
+    const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), resuming ? "resume" : "dispatch");
+    atomic(join(runDir, "main-audit.json"), { file: mainAudit });
     atomic(join(runDir, "run.json"), info);
     atomic(join(control(ctx, id), "latest.json"), { directory });
     writeFileSync(join(runDir, "prompt.txt"), promptFor(ctx, snap, resuming), { flag: "wx" });
@@ -719,6 +725,19 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
     process.removeListener("SIGINT", stop);
     if (out !== undefined) closeSync(out);
     if (err !== undefined) closeSync(err);
+    try {
+      const auditFile = readPointer(join(runDir, "main-audit.json")).file;
+      check(dirname(auditFile) === join(control(ctx, id), "main-audit"), "主仓审计路径不匹配");
+      try {
+        finishMainAudit(ctx.mainRoot, auditFile);
+      } finally {
+        if (existsSync(auditFile)) atomic(join(runDir, "main-audit.json"), { file: auditFile, sha256: fingerprint(auditFile) });
+      }
+    } catch (auditError) {
+      info.state = "failed";
+      info.error = [info.error, errorMessage(auditError)].filter(Boolean).join("；");
+      process.exitCode = 1;
+    }
     info.endedAt = new Date().toISOString();
     save();
   }
@@ -759,7 +778,7 @@ function delivery(ctx: TaskContext, snap: Snapshot) {
   for (const path of snap.spec.writable) safePath(wt, path);
   return { wt, task, commit, changed };
 }
-export async function verify(ctx: TaskContext, id: string) {
+export async function verify(ctx: TaskContext, id: string, mainReview?: string) {
   return lock(ctx, id, async () => {
     noRunning(ctx, id);
     const snap = loadSnapshot(ctx, id),
@@ -771,7 +790,10 @@ export async function verify(ctx: TaskContext, id: string) {
     atomic(file, result);
     atomic(join(control(ctx, id), "latest-verify.json"), { file });
     try {
+      assertMainClean(ctx.mainRoot);
       const { wt, commit, changed } = delivery(ctx, snap);
+      if (mainReview) reviewMainAudits(control(ctx, id), inputFile(ctx, mainReview));
+      assertMainAuditsReviewed(control(ctx, id));
       result.commit = commit;
       result.changed = changed;
       for (const [index, entry] of snap.spec.verify.entries()) {
@@ -780,6 +802,7 @@ export async function verify(ctx: TaskContext, id: string) {
         const argv = entry.argv.map((arg) => arg.replaceAll("{output}", commandOutput));
         const stdout = join(output, `${index}.stdout.log`),
           stderr = join(output, `${index}.stderr.log`);
+        const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), `verify:${entry.name}`);
         const out = openSync(stdout, "wx"),
           err = openSync(stderr, "wx");
         let run;
@@ -792,6 +815,13 @@ export async function verify(ctx: TaskContext, id: string) {
             err,
             (entry.timeoutSeconds ?? 300) * 1000,
           );
+        } catch (runError) {
+          try {
+            finishMainAudit(ctx.mainRoot, mainAudit);
+          } catch (auditError) {
+            throw new Error(`${errorMessage(runError)}；${errorMessage(auditError)}`, { cause: auditError });
+          }
+          throw runError;
         } finally {
           closeSync(out);
           closeSync(err);
@@ -809,6 +839,7 @@ export async function verify(ctx: TaskContext, id: string) {
           error: run.error ?? null,
         });
         atomic(file, result);
+        finishMainAudit(ctx.mainRoot, mainAudit);
         check(
           run.exitCode === 0 && !run.timedOut && !run.cancelled,
           `验证命令失败：${entry.name}；${run.timedOut ? "期限已到（超时）" : run.cancelled ? "协调者中断" : "退出码 " + run.exitCode}；错误 ${run.error ?? readFileSync(stderr, "utf8")}；记录 ${file}`,
@@ -817,6 +848,7 @@ export async function verify(ctx: TaskContext, id: string) {
         check(git(wt, "status", "--porcelain") === "", "验证命令修改了受跟踪文件或生成未提交文件");
         checkInputs(wt, snap.spec);
       }
+      result.mainAudits = mainAuditManifest(control(ctx, id));
       result.outputs = outputManifest(output);
       result.passed = true;
     } catch (e) {
@@ -851,6 +883,8 @@ export function accept(ctx: TaskContext, id: string, reviewPath: string) {
   text(reviewPath, "独立审查记录 --review");
   return lock(ctx, id, () => {
     noRunning(ctx, id);
+    assertMainClean(ctx.mainRoot);
+    assertMainAuditsReviewed(control(ctx, id));
     const snap = loadSnapshot(ctx, id),
       { wt, task, commit } = delivery(ctx, snap);
     const pointer = join(control(ctx, id), "latest-verify.json");
