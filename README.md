@@ -6,7 +6,7 @@
 |---|---|
 | `@nexus-kit/pwa` | PWA 控制器（检测链、弹窗时机、升级状态机、强制更新、`?nosw=1`）、版本比对、安装识别、离线补缓存 |
 | `@nexus-kit/pwa-react` | `usePwaUpdate`、`useInstallPrompt` |
-| `@nexus-kit/runtime` | `/log` 日志、`/perf` 性能采集（水位长线、启动画像、帧统计）、`/assets` 图像资源（加载调度、关键闸门、解码位图缓存）、`/lifecycle` 异常退出取证、诊断导出与白屏兜底、`/boot` 主包加载失败兜底 |
+| `@nexus-kit/runtime` | `/log` 日志、`/perf` 性能采集（水位长线、启动画像、帧统计）、`/assets` 图像资源（加载调度、关键闸门、解码位图缓存）、`/audio` 音频（解锁、回前台恢复与假死重建、音效与音乐播放）、`/lifecycle` 异常退出取证、诊断导出与白屏兜底、`/boot` 主包加载失败兜底 |
 | `@nexus-kit/vite` | `nexusPwa()` 构建插件、`verifyPwaBuild()` 构建后门禁 |
 | `@nexus-kit/devflow` | `nexus-devflow`：docs-audit、check-changelog、install-hooks、deploy、worktree、release |
 

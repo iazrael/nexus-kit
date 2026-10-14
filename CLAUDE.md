@@ -18,6 +18,7 @@
 - **架构·并行开发与发版**：[并行开发与发版](docs/架构算法/并行开发与发版.md) —— 工作树建/合/收、合入只快进、共享项与隔离、回收判定、Claude 钩子、发版链与发版锁。动 devflow worktree/release 前先读。
 - **架构·性能采集**：[性能采集](docs/架构算法/性能采集.md) —— 水位长线与走势、帧统计、启动画像、跨会话水位、进诊断文件的摘要与 JSONL 附录、WebGL 记账。动 runtime 的 /perf 前先读。
 - **架构·图像资源**：[图像资源](docs/架构算法/图像资源.md) —— 加载调度器（档位排序、按 URL 去重、取消、关键闸门）、解码位图缓存（引用计数、LRU 预算、淘汰即关）、指标进水位。动 runtime 的 /assets 前先读。
+- **架构·音频**：[音频](docs/架构算法/音频.md) —— 引擎宿主（解锁、回前台恢复、假死重建、总线与下潜、发声前置门）、样本播放器（解码缓存与失败分级、限频、补播时限、发声上限、音乐意图校对）、音量偏好、真机清单。动 runtime 的 /audio 前先读。
 - **登记册·平台坑账**：[平台坑账](docs/架构算法/平台坑账.md) —— 每个踩过的坑与 kit 里的防线。修 bug 先登记、先补失败测试。
 
 ### 规范
@@ -47,7 +48,7 @@
 - TypeScript strict 全开、ESM only、禁 `any`，外部数据先 unknown 后校验。
 - pwa、runtime 零框架依赖；pwa-react 不写样式；包间只用 peerDependencies。
 - `packages/*/dist` 入库，与源码同提交（`pnpm dist:check` 拦截）。
-- 常用命令：`pnpm worktree:new|merge|rm|ls`（并行开发，见交付规范 §5）、`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链、日志诊断与图像资源）、
+- 常用命令：`pnpm worktree:new|merge|rm|ls`（并行开发，见交付规范 §5）、`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链、日志诊断、图像资源与音频）、
   `pnpm init-app <目录>`（生成新项目）、`pnpm test:coverage`。
 
 ## 3. 工作流

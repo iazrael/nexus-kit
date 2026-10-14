@@ -40,6 +40,8 @@ export declare function createLoader(options?: LoaderOptions): {
     /** 关键闸门：critical 有结论或 capMs 到期前，档位 2、3 不发。新的 hold 取代旧闸门 */
     hold(critical: Promise<unknown>, capMs: number): void;
     has: (key: string) => boolean;
+    /** 任务在哪：排队中 / 在飞 / 不存在 */
+    state(key: string): "queued" | "running" | null;
     snapshot(): {
         running: string[];
         queued: string[];

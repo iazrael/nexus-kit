@@ -185,6 +185,7 @@ describe("createLoader", () => {
     expect(loader.reprioritize("b", { tier: 0 })).toBe(true);
     expect(loader.reprioritize("a", { tier: 0 })).toBe(false);
     expect(loader.snapshot().queued).toEqual(["b", "c"]);
+    expect([loader.state("a"), loader.state("b"), loader.state("zzz")]).toEqual(["running", "queued", null]);
     expect(gauges.get("assets.queued")!()).toBe(2);
     expect(gauges.get("assets.running")!()).toBe(1);
     loader.dispose();

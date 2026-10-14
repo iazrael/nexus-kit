@@ -193,6 +193,11 @@ export function createLoader(options: LoaderOptions = {}) {
 
     has: (key: string): boolean => tasks.has(key),
 
+    /** 任务在哪：排队中 / 在飞 / 不存在 */
+    state(key: string): "queued" | "running" | null {
+      return tasks.get(key)?.state ?? null;
+    },
+
     snapshot(): { running: string[]; queued: string[]; gateOpen: boolean } {
       return {
         running: [...tasks.values()].filter((t) => t.state === "running").map((t) => t.key),

@@ -136,6 +136,10 @@ export function createLoader(options = {}) {
             critical.then(() => release("settled"), () => release("settled"));
         },
         has: (key) => tasks.has(key),
+        /** 任务在哪：排队中 / 在飞 / 不存在 */
+        state(key) {
+            return tasks.get(key)?.state ?? null;
+        },
         snapshot() {
             return {
                 running: [...tasks.values()].filter((t) => t.state === "running").map((t) => t.key),
