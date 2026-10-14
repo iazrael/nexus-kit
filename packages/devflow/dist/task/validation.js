@@ -28,9 +28,18 @@ export function command(value, label) {
     args.forEach((v) => text(v, label));
     return args;
 }
-export function number(value, label, minimum = 0) {
+export function number(value, label, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
     check(typeof value === "number" && Number.isFinite(value) && value >= minimum, `${label} 必须是大于等于 ${minimum} 的有限数字`);
+    check(value <= maximum, `${label} 不能超过 ${maximum}`);
     return value;
+}
+// Node timers fire after 1 ms when the delay exceeds a signed 32-bit millisecond count.
+const maxTimerMs = 2 ** 31 - 1;
+export const maxMinutes = Math.floor(maxTimerMs / 60_000);
+export const maxSeconds = Math.floor(maxTimerMs / 1000);
+/** Replaces control characters so recorded text cannot break lines or inject terminal escapes. */
+export function printable(value) {
+    return Array.from(String(value ?? "-"), (char) => (char.codePointAt(0) < 32 || char.codePointAt(0) === 127 ? " " : char)).join("");
 }
 export function inside(root, path) {
     const rel = relative(root, path);

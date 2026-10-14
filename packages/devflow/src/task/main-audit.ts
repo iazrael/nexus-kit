@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readlinkSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname, basename, relative } from "node:path";
-import { check, json, object, text, errorCode, safePath } from "./validation.ts";
+import { check, json, object, text, errorCode, safePath, printable } from "./validation.ts";
 import { gitOutput as git, atomic as save } from "./io.ts";
 import { fingerprint, nonce } from "./definition.ts";
 
@@ -19,6 +20,8 @@ interface MainAudit {
   after?: MainState;
   passed: boolean;
   paths?: string[];
+  commits?: string[];
+  warning?: string;
   error?: string;
 }
 function hash(value: string | Buffer) {
@@ -94,7 +97,12 @@ export function beginMainAudit(root: string, control: string, operation: string)
   save(safePath(control, `main-audit-refs/${basename(file)}`), { file });
   return file;
 }
-export function finishMainAudit(root: string, file: string) {
+/**
+ * allowAdvance: the execution window may last hours while the coordinator integrates other tasks.
+ * A clean main that only fast-forwarded passes with a warning listing the new commits;
+ * uncommitted changes, hidden index entries, branch switches and rewritten history still fail.
+ */
+export function finishMainAudit(root: string, file: string, allowAdvance = false): string | undefined {
   file = safePath(root, relative(root, file));
   const audit = readAudit(file);
   try {
@@ -103,12 +111,22 @@ export function finishMainAudit(root: string, file: string) {
     audit.paths = [...new Set([...Object.keys(audit.before.files), ...Object.keys(after.files)])].filter(
       (path) => audit.before.files[path] !== after.files[path],
     );
-    audit.passed =
-      audit.paths.length === 0 &&
-      audit.before.head === after.head &&
-      audit.before.branch === after.branch &&
-      after.dirty === "" &&
-      after.hidden.length === 0;
+    const settled = audit.before.branch === after.branch && after.dirty === "" && after.hidden.length === 0;
+    const unchanged = audit.paths.length === 0 && audit.before.head === after.head;
+    const advanced =
+      allowAdvance &&
+      audit.before.head !== after.head &&
+      spawnSync("git", ["merge-base", "--is-ancestor", audit.before.head, after.head], { cwd: root }).status === 0;
+    audit.passed = settled && (unchanged || advanced);
+    if (audit.passed && advanced) {
+      audit.commits = git(root, "log", "-z", "--format=%H %s", `${audit.before.head}..${after.head}`)
+        .split("\0")
+        .filter(Boolean)
+        .map(printable);
+      const shown = audit.commits.slice(0, 20).join(" | ");
+      const more = audit.commits.length > 20 ? ` | 另有 ${audit.commits.length - 20} 个，见 ${file}` : "";
+      audit.warning = `主仓在 ${audit.operation} 期间有 ${audit.commits.length} 个新提交（快进，工作区干净）：${shown}${more}。协调者确认这些提交都来自自己的合入`;
+    }
     if (!audit.passed)
       audit.error = `主仓在 ${audit.operation} 期间变化：路径 ${JSON.stringify(audit.paths)}；HEAD ${audit.before.head} → ${after.head}；索引隐藏路径 ${JSON.stringify(after.hidden)}；Git 状态 ${JSON.stringify(after.dirty)}。变化来源需协调者核对`;
   } catch (e) {
@@ -118,6 +136,7 @@ export function finishMainAudit(root: string, file: string) {
   save(file, audit);
   save(safePath(dirname(dirname(file)), `main-audit-refs/${basename(file)}`), { file, sha256: fingerprint(file) });
   check(audit.passed, `${audit.error}；主仓审计记录 ${file}；核对后使用 verify --main-review <JSON> 登记，不自动回滚`);
+  return audit.warning;
 }
 export function reviewMainAudits(control: string, reviewFile: string) {
   assertReferences(control);
@@ -189,6 +208,17 @@ export function assertMainAuditsReviewed(control: string) {
   }
 }
 
+export function mainAuditWarnings(control: string): string[] {
+  const dir = safePath(control, "main-audit");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((id) => id.endsWith(".json"))
+    .sort()
+    .flatMap((id) => {
+      const warning = readAudit(safePath(control, `main-audit/${id}`)).warning;
+      return typeof warning === "string" ? [warning] : [];
+    });
+}
 export function mainAuditManifest(control: string) {
   const dir = safePath(control, "main-audit");
   if (!existsSync(dir)) return [];

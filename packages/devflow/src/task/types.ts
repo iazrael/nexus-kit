@@ -85,6 +85,7 @@ export interface RunInfo {
   stopRequested?: boolean;
   endedAt?: string;
   taskStatus?: string;
+  mainWarning?: string;
 }
 export interface LaunchResult {
   id: string;
@@ -171,6 +172,7 @@ export interface TaskStatus {
   legacy: boolean;
   status: string;
   note?: string;
+  error?: string;
   id?: string;
   worktree?: string;
   treeExists?: boolean;

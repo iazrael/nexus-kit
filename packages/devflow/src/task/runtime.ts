@@ -25,8 +25,9 @@ import {
   reviewMainAudits,
   assertMainAuditsReviewed,
   mainAuditManifest,
+  mainAuditWarnings,
 } from "./main-audit.ts";
-import { errorMessage, errorCode } from "./validation.ts";
+import { errorMessage, errorCode, printable } from "./validation.ts";
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.ts";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { agySessions, agyResult, agyInvocation } from "./agy.ts";
@@ -91,10 +92,19 @@ function loadSnapshot(ctx: TaskContext, id: string) {
 function worktree(ctx: TaskContext, snap: Snapshot) {
   return taskWorktree(ctx.mainRoot, snap.config, snap.spec.id);
 }
+// -z avoids core.quotepath escaping of non-ASCII names; literal pathspecs keep * and [ as plain characters.
+function tracked(root: string, path: string) {
+  return execFileSync("git", ["--literal-pathspecs", "ls-files", "-z", "--", path], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .includes(path);
+}
+function inHead(root: string, path: string) {
+  return spawnSync("git", ["cat-file", "-e", `HEAD:${path}`], { cwd: root }).status === 0;
+}
 function assertCommitted(root: string, paths: string[]) {
   for (const path of paths) {
-    check(git(root, "ls-files", "--", path) === path, `输入或任务未提交：${path}`);
-    check(git(root, "status", "--porcelain", "--", path) === "", `输入或任务有未提交改动：${path}`);
+    check(tracked(root, path), `输入或任务未提交：${path}`);
+    check(git(root, "--literal-pathspecs", "status", "--porcelain", "--", path) === "", `输入或任务有未提交改动：${path}`);
   }
 }
 function checkInputs(root: string, spec: TaskSpec, source = false) {
@@ -117,6 +127,13 @@ function prepare(ctx: TaskContext, id: string, refresh = false): Snapshot {
   check(["待认领", "返工", "中断", "受阻", "执行中"].includes(task.status), `状态 ${task.status} 不能派发或建树`);
   assertCommitted(ctx.root, [`${ctx.cfg.tasksDir}/${id}.md`, "nexus.config.json", ...ctx.cfg.rules]);
   checkInputs(ctx.root, task.spec, true);
+  // start copies untracked inputs into the task tree; unless ignored they dirty it and verify can never pass.
+  for (const input of task.spec.inputs) {
+    // The task tree is built from HEAD, so a staged-only input is copied in just like an untracked one.
+    if (inHead(ctx.root, input.path)) continue;
+    const ignored = spawnSync("git", ["check-ignore", "--quiet", "--", input.path], { cwd: ctx.root }).status === 0;
+    check(ignored, `输入 ${input.path} 既未提交也未被 Git 忽略；复制进任务树后会成为未提交改动，先把它加入 .gitignore`);
+  }
   for (const dep of task.spec.dependencies) {
     const path = join(control(ctx, dep.id), "accepted.json");
     check(existsSync(path), `前置任务未通过：${dep.id}`);
@@ -182,7 +199,10 @@ function lock<T>(ctx: TaskContext, id: string, fn: () => T): T {
   try {
     mkdirSync(path);
   } catch (e) {
-    if (errorCode(e) === "EEXIST") throw new Error("任务操作正在进行或残锁待检查，拒绝重复操作", { cause: e });
+    if (errorCode(e) === "EEXIST")
+      throw new Error(`任务操作正在进行或留有残锁，拒绝重复操作：${path}；确认没有该任务的 task 进程在运行后，删除这个目录再重试`, {
+        cause: e,
+      });
     throw e;
   }
   let result;
@@ -261,42 +281,52 @@ export function start(ctx: TaskContext, id: string, owner: string) {
 }
 export function status(ctx: TaskContext, id?: string) {
   const dir = safePath(ctx.root, ctx.cfg.tasksDir);
-  const files = id ? [`${id}.md`] : readdirSync(dir).filter((p) => p.endsWith(".md") && p !== "协作规则.md");
+  const files = id
+    ? [`${id}.md`]
+    : readdirSync(dir).filter((p) => p.endsWith(".md") && !ctx.cfg.rules.includes(`${ctx.cfg.tasksDir}/${p}`));
   const tasks: TaskStatus[] = files.map((file) => {
-    const content = readFileSync(safePath(ctx.root, `${ctx.cfg.tasksDir}/${file}`), "utf8");
-    const match = content.match(/<!-- task-config -->\s*```json\n([\s\S]*?)\n```/);
-    if (!match)
-      return {
-        task: `${ctx.cfg.tasksDir}/${file}`,
-        legacy: true,
-        status: content.match(/^> 状态：(.+)$/m)?.[1] ?? "未登记",
-        note: "主仓历史状态，未读取旧工作树；旧任务只读，不支持派发",
-      };
-    const key = file.slice(0, -3),
-      task = readTask(ctx.root, ctx.cfg, key, false);
-    const wt = taskWorktree(ctx.mainRoot, ctx.cfg, key),
-      hasTree = existsSync(wt);
-    let current = task.status,
-      head: string | null = null;
-    if (hasTree) {
-      check(git(wt, "branch", "--show-current") === task.spec.branch, `工作树分支不符：${key}`);
-      current = header(readFileSync(taskFile(wt, ctx.cfg, key), "utf8"), "状态");
-      head = git(wt, "rev-parse", "HEAD");
+    try {
+      return taskStatus(ctx, file);
+    } catch (e) {
+      // One broken task must not hide the others.
+      return { id: file.slice(0, -3), task: `${ctx.cfg.tasksDir}/${file}`, legacy: false, status: "未知", error: errorMessage(e) };
     }
-    return {
-      id: key,
-      task: `${ctx.cfg.tasksDir}/${file}`,
-      status: current,
-      worktree: wt,
-      treeExists: hasTree,
-      head,
-      legacy: false,
-      run: runInfo(ctx, key),
-      verification: verificationInfo(ctx, key, head),
-      acceptance: acceptanceInfo(ctx, key, head),
-    };
   });
   return { tasks };
+}
+function taskStatus(ctx: TaskContext, file: string): TaskStatus {
+  const content = readFileSync(safePath(ctx.root, `${ctx.cfg.tasksDir}/${file}`), "utf8");
+  const match = content.match(/<!-- task-config -->\s*```json\n([\s\S]*?)\n```/);
+  if (!match)
+    return {
+      task: `${ctx.cfg.tasksDir}/${file}`,
+      legacy: true,
+      status: content.match(/^> 状态：(.+)$/m)?.[1] ?? "未登记",
+      note: "主仓历史状态，未读取旧工作树；旧任务只读，不支持派发",
+    };
+  const key = file.slice(0, -3),
+    task = readTask(ctx.root, ctx.cfg, key, false);
+  const wt = taskWorktree(ctx.mainRoot, ctx.cfg, key),
+    hasTree = existsSync(wt);
+  let current = task.status,
+    head: string | null = null;
+  if (hasTree) {
+    check(git(wt, "branch", "--show-current") === task.spec.branch, `工作树分支不符：${key}`);
+    current = header(readFileSync(taskFile(wt, ctx.cfg, key), "utf8"), "状态");
+    head = git(wt, "rev-parse", "HEAD");
+  }
+  return {
+    id: key,
+    task: `${ctx.cfg.tasksDir}/${file}`,
+    status: current,
+    worktree: wt,
+    treeExists: hasTree,
+    head,
+    legacy: false,
+    run: runInfo(ctx, key),
+    verification: verificationInfo(ctx, key, head),
+    acceptance: acceptanceInfo(ctx, key, head),
+  };
 }
 function verificationInfo(ctx: TaskContext, id: string, head: string | null): VerificationStatus | null {
   const pointer = join(control(ctx, id), "latest-verify.json");
@@ -376,11 +406,11 @@ function acceptanceInfo(ctx: TaskContext, id: string, head: string | null): Acce
 }
 
 export function shortStatus(result: { tasks: TaskStatus[] }) {
-  const clean = (v: unknown) =>
-    Array.from(String(v ?? "-"), (char) => (char.codePointAt(0)! < 32 || char.codePointAt(0) === 127 ? " " : char)).join("");
+  const clean = printable;
   return result.tasks
     .map((t) => {
       if (t.legacy) return `${clean(t.task)}\t${clean(t.status)}\t历史（主仓快照）\t-\t验证=-`;
+      if (t.error) return `${clean(t.id)}\t错误：${clean(t.error)}`;
       const v = t.verification,
         label = !v
           ? "-"
@@ -397,7 +427,7 @@ export function shortStatus(result: { tasks: TaskStatus[] }) {
                     : v.passed
                       ? "通过"
                       : "失败";
-      return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
+      return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}${t.run?.mainWarning ? "（主仓新提交）" : ""}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
     })
     .join("\n");
 }
@@ -476,6 +506,7 @@ async function waitForRun(ctx: TaskContext, run: LaunchResult) {
       if (info.endedAt && ["completed", "failed", "interrupted"].includes(info.state)) {
         const commandExitCode = info.state === "completed" ? (info.taskStatus === "受阻" ? 3 : 0) : 1;
         if (commandExitCode) process.stderr.write(`[task] ${info.error ?? "任务受阻"}；运行目录 ${run.runDir}\n`);
+        if (info.mainWarning) process.stderr.write(`[task] ${info.mainWarning}\n`);
         return { ...info, runDir: run.runDir, commandExitCode, ...(info.state === "completed" ? { result: agyResult(info.stdout) } : {}) };
       }
       const pid = info.supervisorPid ?? run.supervisorPid;
@@ -573,6 +604,7 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
     sessionTimer: NodeJS.Timeout | undefined,
     termination: Promise<void> | undefined,
     cleanupError: unknown,
+    interruption: string | undefined,
     out: number | undefined,
     err: number | undefined,
     sessionError: unknown;
@@ -703,11 +735,7 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
         info.outputError = errorMessage(parseError);
       }
     }
-    try {
-      markInterrupted(ctx, snap, `执行中断：${errorMessage(e)}；日志 ${relative(ctx.mainRoot, runDir)}`);
-    } catch (recordError) {
-      info.recordError = errorMessage(recordError);
-    }
+    interruption = `执行中断：${errorMessage(e)}；日志 ${relative(ctx.mainRoot, runDir)}`;
     process.exitCode = 1;
   } finally {
     clearTimeout(budget);
@@ -721,6 +749,14 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
       info.error = `执行器后代收尾失败：${errorMessage(cleanupError)}`;
       process.exitCode = 1;
     }
+    // Record only after descendants are gone, otherwise they can still race on the task tree.
+    if (interruption && cleanupError) info.recordError = "执行器后代未能收尾，未写中断记录，避免与残留进程抢写任务树";
+    else if (interruption)
+      try {
+        markInterrupted(ctx, snap, interruption);
+      } catch (recordError) {
+        info.recordError = errorMessage(recordError);
+      }
     process.removeListener("SIGTERM", stop);
     process.removeListener("SIGINT", stop);
     if (out !== undefined) closeSync(out);
@@ -729,7 +765,8 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
       const auditFile = readPointer(join(runDir, "main-audit.json")).file;
       check(dirname(auditFile) === join(control(ctx, id), "main-audit"), "主仓审计路径不匹配");
       try {
-        finishMainAudit(ctx.mainRoot, auditFile);
+        const warning = finishMainAudit(ctx.mainRoot, auditFile, true);
+        if (warning) info.mainWarning = warning;
       } finally {
         if (existsSync(auditFile)) atomic(join(runDir, "main-audit.json"), { file: auditFile, sha256: fingerprint(auditFile) });
       }
@@ -928,7 +965,9 @@ export function accept(ctx: TaskContext, id: string, reviewPath: string) {
       acceptedAt: new Date().toISOString(),
     };
     atomic(join(control(ctx, id), "accepted.json"), accepted);
-    return accepted;
+    const mainWarnings = mainAuditWarnings(control(ctx, id));
+    for (const warning of mainWarnings) process.stderr.write(`[task] ${warning}\n`);
+    return { ...accepted, mainWarnings };
   });
 }
 

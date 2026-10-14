@@ -1,7 +1,14 @@
 import { basename, dirname, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { TaskConfig } from "./types.ts";
-import { check, object, text, command, number, safePath, stringList } from "./validation.ts";
+import { check, object, text, command, number, safePath, stringList, maxMinutes } from "./validation.ts";
+
+export const efforts = ["low", "medium", "high", "xhigh", "max"];
+export const modes = ["accept-edits", "auto", "plan"];
+/** hardTimeoutMinutes 0 means no hard limit; the other durations must be positive. */
+export function minutes(value: unknown, label: "budgetMinutes" | "progressMinutes" | "hardTimeoutMinutes"): number {
+  return number(value, label, label === "hardTimeoutMinutes" ? 0 : 0.001, maxMinutes);
+}
 
 export function parseTaskConfig(value: unknown): TaskConfig {
   const cfg = object(value, "task 配置");
@@ -9,8 +16,8 @@ export function parseTaskConfig(value: unknown): TaskConfig {
   const agy = object(cfg.agy, "task.agy");
   const effort = text(agy.effort, "task.agy.effort");
   const mode = text(agy.mode, "task.agy.mode");
-  check(["low", "medium", "high", "xhigh", "max"].includes(effort), "agy.effort 不合法");
-  check(["accept-edits", "auto", "plan"].includes(mode), "agy.mode 不合法");
+  check(efforts.includes(effort), "agy.effort 不合法");
+  check(modes.includes(mode), "agy.mode 不合法");
   const rules = stringList(cfg.rules, "task.rules");
   check(rules.length > 0, "rules 必须列出公共规则");
   const worktreeDir = cfg.worktreeDir === null ? null : text(cfg.worktreeDir ?? ".worktrees", "task.worktreeDir");
@@ -30,9 +37,9 @@ export function parseTaskConfig(value: unknown): TaskConfig {
     },
     worktreeDir,
     postCreate: postCreate.map((v) => command(v, "task.postCreate")),
-    budgetMinutes: number(cfg.budgetMinutes, "budgetMinutes", 0.001),
-    progressMinutes: number(cfg.progressMinutes, "progressMinutes", 0.001),
-    hardTimeoutMinutes: number(cfg.hardTimeoutMinutes, "hardTimeoutMinutes"),
+    budgetMinutes: minutes(cfg.budgetMinutes, "budgetMinutes"),
+    progressMinutes: minutes(cfg.progressMinutes, "progressMinutes"),
+    hardTimeoutMinutes: minutes(cfg.hardTimeoutMinutes, "hardTimeoutMinutes"),
   };
 }
 

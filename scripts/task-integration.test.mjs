@@ -1278,7 +1278,7 @@ function mainReview(root) {
   writeFileSync(file, JSON.stringify({ reviewer: "coordinator", reason: "核对主仓改动，确认内容保留", incidents }));
   return file;
 }
-for (const scenario of ["main-write", "main-commit", "main-child-write"]) {
+for (const scenario of ["main-write", "main-amend", "main-child-write"]) {
   test(`主仓审计：执行 ${scenario} 留证，后续提交不能抹去，核对后可保留内容`, async () => {
     const root = repo();
     ready(root);
@@ -1287,7 +1287,7 @@ for (const scenario of ["main-write", "main-commit", "main-child-write"]) {
     const done = await finished(root);
     assert.equal(done.run.state, "failed");
     assert.match(done.run.error, /主仓/);
-    if (scenario !== "main-commit") {
+    if (scenario !== "main-amend") {
       git(root, "add", ".gitignore");
       git(root, "commit", "-m", "coordinator registration includes contamination");
     }
@@ -1422,7 +1422,7 @@ test("主仓审计：已核对记录不能被后续拒绝的 verify 覆盖", asy
   const root = repo();
   ready(root);
   executorConfig(root);
-  success(detachedScenario(root, "main-commit", "dispatch", "cancel-buy"));
+  success(detachedScenario(root, "main-amend", "dispatch", "cancel-buy"));
   await finished(root);
   const mainRecord = mainReview(root);
   const verified = success(run(root, "verify", "cancel-buy", "--main-review", mainRecord));
@@ -1436,4 +1436,195 @@ test("主仓审计：已核对记录不能被后续拒绝的 verify 覆盖", asy
   assert.notEqual(run(root, "verify", "cancel-buy", "--main-review", mainRecord).status, 0);
   assert.equal(readFileSync(bound.file, "utf8"), original, "正式验收引用的核对记录不能被覆盖");
   assert.equal(success(run(root, "status", "cancel-buy")).tasks[0].acceptance.passed, true);
+});
+
+test("主仓审计：执行期间主仓快进的新提交只提醒并列出提交，复跑无需核对", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(detachedScenario(root, "slow-delivery", "dispatch", "cancel-buy"));
+  // 协调者在任务运行期间合入另一个任务的成果。
+  writeFileSync(join(root, "merged.txt"), "other task");
+  git(root, "add", "merged.txt");
+  git(root, "commit", "-m", "merge other task");
+  const merged = git(root, "rev-parse", "HEAD");
+  const done = await finished(root);
+  assert.equal(done.run.state, "completed");
+  assert.match(done.run.mainWarning, new RegExp(merged));
+  assert.match(done.run.mainWarning, /merge other task/);
+  assert.match(run(root, "status", "--short").stdout, /completed（主仓新提交）/);
+  assert.equal(success(run(root, "verify", "cancel-buy")).passed, true);
+  // 执行者自己往主仓提交同样只提醒：这是放宽审计的已知代价，提交记录本身留证。
+  const own = repo();
+  ready(own);
+  executorConfig(own);
+  success(detachedScenario(own, "main-commit", "dispatch", "cancel-buy"));
+  const ownDone = await finished(own);
+  assert.equal(ownDone.run.state, "completed");
+  assert.match(ownDone.run.mainWarning, /main contamination/);
+});
+
+test("硬期限中断记录排在执行器后代收尾之后，不与残留进程抢写任务树", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  configure(root, (cfg) => {
+    cfg.hardTimeoutMinutes = 0.04;
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "hard limit");
+  success(detachedScenario(root, "late-child-commit", "dispatch", "cancel-buy"));
+  const done = await finished(root);
+  assert.equal(done.run.state, "interrupted");
+  assert.equal(done.run.recordError, undefined);
+  const wt = join(root, ".worktrees/cancel-buy");
+  assert.equal(git(wt, "log", "-2", "--format=%s"), "记录中断：cancel-buy\nlate child");
+  assert.match(readFileSync(taskPath(wt), "utf8"), /> 状态：中断/);
+});
+
+test("未跟踪且未被 Git 忽略的输入拒绝派发；加入忽略后复制进任务树也能通过复跑", () => {
+  const root = repo();
+  ready(root);
+  mkdirSync(join(root, "data"));
+  writeFileSync(join(root, "data/in.txt"), "raw");
+  editTask(root, (s) => {
+    s.inputs = [{ path: "data/in.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+  });
+  git(root, "add", "tasks");
+  git(root, "commit", "-m", "untracked input");
+  const rejected = run(root, "dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /data\/in\.txt.*忽略/);
+  writeFileSync(join(root, ".gitignore"), readFileSync(join(root, ".gitignore"), "utf8") + "data\n");
+  git(root, "add", ".gitignore");
+  git(root, "commit", "-m", "ignore input");
+  const started = success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  const wt = started.worktree;
+  assert.equal(readFileSync(join(wt, "data/in.txt"), "utf8"), "raw");
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(taskPath(wt), readFileSync(taskPath(wt), "utf8").replace(/^> 状态：.*$/m, "> 状态：待验收"));
+  git(wt, "add", "tasks", "artifact.txt");
+  git(wt, "commit", "-m", "delivery");
+  assert.equal(success(run(root, "verify", "cancel-buy")).passed, true);
+});
+
+test("status 单个任务现场异常只标该任务，其余任务照常显示", () => {
+  const root = repo();
+  ready(root);
+  ready(root, "other-task");
+  success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  git(join(root, ".worktrees/cancel-buy"), "checkout", "-b", "wrong");
+  const all = success(run(root, "status"));
+  assert.match(all.tasks.find((t) => t.id === "cancel-buy").error, /分支/);
+  assert.equal(all.tasks.find((t) => t.id === "other-task").status, "待认领");
+  const short = run(root, "status", "--short");
+  assert.equal(short.status, 0, short.stderr);
+  assert.match(short.stdout, /cancel-buy\t错误：.*分支/);
+  assert.match(short.stdout, /other-task\t待认领/);
+  writeFileSync(taskPath(root, "other-task"), readFileSync(taskPath(root, "other-task"), "utf8").replace('"version": 1', '"version": 9'));
+  const broken = success(run(root, "status"));
+  assert.match(broken.tasks.find((t) => t.id === "other-task").error, /version/);
+});
+
+test("时间配置超过定时器上限时拒绝，不会让执行器一启动就被杀", () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    cfg.hardTimeoutMinutes = 40000;
+  });
+  const config = run(root, "dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(config.status, 0);
+  assert.match(config.stderr, /hardTimeoutMinutes.*35791/);
+  configure(root, (cfg) => {
+    cfg.hardTimeoutMinutes = 0;
+  });
+  editTask(root, (s) => {
+    s.execution = { budgetMinutes: 40000 };
+  });
+  assert.match(run(root, "dispatch", "cancel-buy", "--dry-run").stderr, /budgetMinutes.*35791/);
+  editTask(root, (s) => {
+    delete s.execution;
+    s.verify[0].timeoutSeconds = 3_000_000;
+  });
+  assert.match(run(root, "dispatch", "cancel-buy", "--dry-run").stderr, /验证期限.*2147483/);
+});
+
+test("残锁报错给出锁路径和清理条件", () => {
+  const root = repo();
+  ready(root);
+  const lock = join(root, "research/local/task-control/cancel-buy/operation.lock");
+  mkdirSync(lock, { recursive: true });
+  const result = run(root, "start", "cancel-buy", "--owner", "执行者");
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stderr.includes(lock), result.stderr);
+  assert.match(result.stderr, /没有.*进程.*删除/);
+});
+
+test("status 按配置排除规则文件，不写死规则文件名", () => {
+  const root = repo();
+  ready(root);
+  git(root, "mv", "tasks/协作规则.md", "tasks/规则.md");
+  configure(root, (cfg) => {
+    cfg.rules = ["tasks/规则.md"];
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "rename rules");
+  const tasks = success(run(root, "status")).tasks;
+  assert.deepEqual(
+    tasks.map((t) => t.task),
+    ["tasks/cancel-buy.md"],
+  );
+});
+
+test("默认 quotepath 下中文规则与已提交的中文输入照常派发；只暂存未提交的输入拒绝", () => {
+  const root = repo();
+  ready(root);
+  writeFileSync(join(root, "需求输入.txt"), "raw");
+  writeFileSync(join(root, "staged-only.txt"), "raw");
+  editTask(root, (s) => {
+    s.inputs = [{ path: "需求输入.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+  });
+  git(root, "add", ".");
+  git(root, "reset", "-q", "--", "staged-only.txt");
+  git(root, "commit", "-m", "chinese input");
+  const env = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.quotepath", GIT_CONFIG_VALUE_0: "true" };
+  const quoted = (...args) => spawnSync(process.execPath, [cli, "task", ...args], { cwd: root, encoding: "utf8", timeout: 20_000, env });
+  success(quoted("dispatch", "cancel-buy", "--dry-run"));
+  editTask(root, (s) => {
+    s.inputs = [{ path: "staged-only.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "staged input", "--", "tasks");
+  git(root, "add", "staged-only.txt");
+  const staged = quoted("dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(staged.status, 0);
+  assert.match(staged.stderr, /staged-only\.txt.*忽略/);
+});
+
+test("status 指定任务读取失败时退出非零，列表模式仍降级显示", () => {
+  const root = repo();
+  ready(root);
+  const missing = run(root, "status", "no-such-task");
+  assert.equal(missing.status, 1);
+  assert.match(JSON.parse(missing.stdout).tasks[0].error, /ENOENT|no-such-task/);
+  success(run(root, "status"));
+});
+
+test("快进提醒清洗提交标题里的控制字符，验收输出带出执行期间的主仓提醒", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(detachedScenario(root, "slow-delivery", "dispatch", "cancel-buy"));
+  writeFileSync(join(root, "merged.txt"), "other task");
+  git(root, "add", "merged.txt");
+  git(root, "commit", "-m", "merge \u001b[31mred");
+  const done = await finished(root);
+  assert.equal(done.run.state, "completed");
+  assert.equal(done.run.mainWarning.includes("\u001b"), false);
+  success(run(root, "verify", "cancel-buy"));
+  const wt = join(root, ".worktrees/cancel-buy");
+  const accepted = run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD")));
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.match(JSON.parse(accepted.stdout).mainWarnings[0], /merge/);
+  assert.match(accepted.stderr, /主仓.*新提交/);
 });

@@ -1,4 +1,4 @@
-import type { TaskContext, LaunchResult, RunOptions, RunInfo, Accepted, TaskStatus } from "./types.ts";
+import type { TaskContext, LaunchResult, RunOptions, RunInfo, TaskStatus } from "./types.ts";
 export { git } from "./io.ts";
 export declare function context(cwd?: string): TaskContext;
 export declare function start(ctx: TaskContext, id: string, owner: string): {
@@ -44,6 +44,7 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     stopRequested?: boolean;
     endedAt?: string;
     taskStatus?: string;
+    mainWarning?: string;
 } | {
     result?: {
         conversation_id: string;
@@ -76,6 +77,7 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     stopRequested?: boolean;
     endedAt?: string;
     taskStatus?: string;
+    mainWarning?: string;
 } | {
     id: string;
     base: string;
@@ -112,6 +114,7 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     stopRequested?: boolean;
     endedAt?: string;
     taskStatus?: string;
+    mainWarning?: string;
 } | {
     result?: {
         conversation_id: string;
@@ -144,6 +147,7 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     stopRequested?: boolean;
     endedAt?: string;
     taskStatus?: string;
+    mainWarning?: string;
 }>;
 export declare function supervise(ctx: TaskContext, id: string, directory: string): Promise<RunInfo>;
 export declare function verify(ctx: TaskContext, id: string, mainReview?: string): Promise<{
@@ -170,4 +174,15 @@ export declare function rework(ctx: TaskContext, id: string, messagePath: string
     commit: string;
     worktree: string;
 };
-export declare function accept(ctx: TaskContext, id: string, reviewPath: string): Accepted;
+export declare function accept(ctx: TaskContext, id: string, reviewPath: string): {
+    mainWarnings: string[];
+    id: string;
+    status: string;
+    verifiedCommit: string;
+    acceptanceCommit: string;
+    receipt: string;
+    receiptSha256: string;
+    review: import("./types.ts").Review;
+    reviewSha256: string;
+    acceptedAt: string;
+};

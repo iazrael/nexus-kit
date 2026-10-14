@@ -54,6 +54,7 @@ export function readRun(file: string): RunInfo {
     "reportedConversationId",
     "endedAt",
     "taskStatus",
+    "mainWarning",
   ])
     if (o[key] !== undefined) text(o[key], key);
   if (o.exitCode !== undefined)

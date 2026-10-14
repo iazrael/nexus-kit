@@ -1,6 +1,6 @@
 import type { TaskConfig, TaskSpec, TaskDefinition } from "./types.ts";
-import { check, text, command, number, safePath, json, object, stringList } from "./validation.ts";
-import { parseTaskConfig, validateTaskPaths, taskWorktreeName } from "./config.ts";
+import { check, text, command, number, safePath, json, object, stringList, maxSeconds } from "./validation.ts";
+import { parseTaskConfig, validateTaskPaths, taskWorktreeName, efforts, modes, minutes } from "./config.ts";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { relative, dirname } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -96,18 +96,11 @@ export function readTask(root: string, cfg: TaskConfig, id: string, complete = t
     check(spec.verify.length > 0, "任务必须有验证命令");
   }
   check(states.includes(header(content, "状态")), "非法任务状态");
+  // parseSpec has already validated every execution field.
   const effective = structuredClone(cfg);
-  if (spec.execution !== undefined) {
-    check(spec.execution && typeof spec.execution === "object" && !Array.isArray(spec.execution), "execution 必须是对象");
-    for (const [k, v] of Object.entries(spec.execution)) {
-      if (k === "budgetMinutes" || k === "progressMinutes" || k === "hardTimeoutMinutes")
-        effective[k] = number(v, k, k === "hardTimeoutMinutes" ? 0 : 0.001);
-      else if (k === "model" || k === "effort" || k === "mode") effective.agy[k] = text(v, k);
-      else throw new Error(`未知 execution 字段：${k}`);
-    }
-    check(["low", "medium", "high", "xhigh", "max"].includes(effective.agy.effort), "execution.effort 不合法");
-    check(["accept-edits", "auto", "plan"].includes(effective.agy.mode), "execution.mode 不合法");
-  }
+  const { model, effort, mode, ...timing } = spec.execution ?? {};
+  Object.assign(effective, timing);
+  Object.assign(effective.agy, { ...(model && { model }), ...(effort && { effort }), ...(mode && { mode }) });
   return { spec, content, status: header(content, "状态"), definition: sha(JSON.stringify(spec)), effective };
 }
 
@@ -148,7 +141,7 @@ export function parseSpec(raw: unknown, root: string, cfg: TaskConfig, id: strin
     return {
       name: text(v.name, "验证名称"),
       argv: command(v.argv, "验证命令"),
-      ...(v.timeoutSeconds === undefined ? {} : { timeoutSeconds: number(v.timeoutSeconds, "验证期限", 0.001) }),
+      ...(v.timeoutSeconds === undefined ? {} : { timeoutSeconds: number(v.timeoutSeconds, "验证期限", 0.001, maxSeconds) }),
     };
   });
   check(s.productReviewRequired === undefined || typeof s.productReviewRequired === "boolean", "productReviewRequired 必须是布尔值");
@@ -169,11 +162,12 @@ export function parseSpec(raw: unknown, root: string, cfg: TaskConfig, id: strin
     const ex = object(s.execution, "execution");
     const execution: NonNullable<TaskSpec["execution"]> = {};
     for (const [k, v] of Object.entries(ex)) {
-      if (k === "budgetMinutes" || k === "progressMinutes" || k === "hardTimeoutMinutes")
-        execution[k] = number(v, k, k === "hardTimeoutMinutes" ? 0 : 0.001);
+      if (k === "budgetMinutes" || k === "progressMinutes" || k === "hardTimeoutMinutes") execution[k] = minutes(v, k);
       else if (k === "model" || k === "mode" || k === "effort") execution[k] = text(v, k);
       else throw new Error(`未知 execution 字段：${k}`);
     }
+    check(execution.effort === undefined || efforts.includes(execution.effort), "execution.effort 不合法");
+    check(execution.mode === undefined || modes.includes(execution.mode), "execution.mode 不合法");
     spec.execution = execution;
   }
   return spec;

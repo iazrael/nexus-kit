@@ -62,12 +62,35 @@ if (scenario === "orphan") {
     process.exit(7);
   }
   if (scenario === "slow-delivery") await new Promise((resolve) => setTimeout(resolve, 1000));
-  if (scenario === "main-write" || scenario === "main-commit") {
+  if (scenario === "main-write" || scenario === "main-commit" || scenario === "main-amend") {
     writeFileSync(join(root, ".gitignore"), readFileSync(join(root, ".gitignore"), "utf8") + "# main changed\n");
     if (scenario === "main-commit") {
       run("git", ["add", ".gitignore"], root);
       run("git", ["commit", "-m", "main contamination"], root);
     }
+    if (scenario === "main-amend") {
+      run("git", ["add", ".gitignore"], root);
+      run("git", ["commit", "--amend", "--no-edit"], root);
+    }
+  }
+  if (scenario === "late-child-commit") {
+    // A descendant that keeps writing the task tree for a while after TERM.
+    const wt = started.worktree,
+      ready = join(root, "research/local/late-child-ready");
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `const fs=require('fs'),cp=require('child_process');process.on('SIGTERM',()=>setTimeout(()=>{fs.writeFileSync(${JSON.stringify(join(wt, "artifact.txt"))},'late');cp.execFileSync('git',['add','artifact.txt'],{cwd:${JSON.stringify(wt)}});cp.execFileSync('git',['commit','-m','late child'],{cwd:${JSON.stringify(wt)}});process.exit(0)},400));fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`,
+      ],
+      { stdio: "ignore" },
+    ).unref();
+    const deadline = Date.now() + 5000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline) throw new Error("late child did not become ready");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60_000));
   }
   if (scenario === "main-child-write") {
     const ready = join(root, "research/local/audit-child-ready");

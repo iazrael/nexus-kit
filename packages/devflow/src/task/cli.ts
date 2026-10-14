@@ -53,7 +53,8 @@ export async function taskCommand(argv: string[]): Promise<number> {
   if (sub === "status") {
     const result = status(ctx, id);
     console.log(values.short ? shortStatus(result) : JSON.stringify(result, null, 2));
-    return 0;
+    // A list degrades per row; a single queried task that cannot be read is a failure.
+    return id && result.tasks.some((t) => t.error) ? 1 : 0;
   }
   const key = idOf(id);
   let result: object;
