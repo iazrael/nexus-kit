@@ -45,6 +45,7 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     endedAt?: string;
     taskStatus?: string;
     mainWarning?: string;
+    baseWarning?: string;
 } | {
     result?: {
         conversation_id: string;
@@ -78,7 +79,9 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     endedAt?: string;
     taskStatus?: string;
     mainWarning?: string;
+    baseWarning?: string;
 } | {
+    baseWarning?: string;
     id: string;
     base: string;
     prompt: string;
@@ -115,6 +118,7 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     endedAt?: string;
     taskStatus?: string;
     mainWarning?: string;
+    baseWarning?: string;
 } | {
     result?: {
         conversation_id: string;
@@ -148,6 +152,7 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     endedAt?: string;
     taskStatus?: string;
     mainWarning?: string;
+    baseWarning?: string;
 }>;
 export declare function supervise(ctx: TaskContext, id: string, directory: string): Promise<RunInfo>;
 export declare function verify(ctx: TaskContext, id: string, mainReview?: string): Promise<{
@@ -165,6 +170,7 @@ export declare function verify(ctx: TaskContext, id: string, mainReview?: string
         file: string;
         sha256: string;
     }[];
+    baseWarning?: string;
     error?: string;
     endedAt?: string;
 }>;
@@ -185,4 +191,5 @@ export declare function accept(ctx: TaskContext, id: string, reviewPath: string)
     review: import("./types.ts").Review;
     reviewSha256: string;
     acceptedAt: string;
+    baseWarning?: string;
 };

@@ -1,4 +1,6 @@
 export declare function check(ok: unknown, message: string): asserts ok;
+/** Fingerprint mismatches report both sides without exposing file contents. */
+export declare function checkFingerprint(expected: string, actual: string, message: string): void;
 export declare function errorMessage(e: unknown): string;
 export declare function errorCode(e: unknown): unknown;
 export declare function object(value: unknown, label: string): Record<string, unknown>;

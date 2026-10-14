@@ -4,6 +4,10 @@ export function check(ok, message) {
     if (!ok)
         throw new Error(message);
 }
+/** Fingerprint mismatches report both sides without exposing file contents. */
+export function checkFingerprint(expected, actual, message) {
+    check(actual === expected, `${message}；期望 SHA-256 ${expected}；实际 SHA-256 ${actual}`);
+}
 export function errorMessage(e) {
     return e instanceof Error ? e.message : String(e);
 }

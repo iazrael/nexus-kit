@@ -4,7 +4,7 @@ import { worktreeNew } from "../worktree.js";
 import { systemProcessProbe } from "../worktree-procs.js";
 import { taskWorktree } from "./config.js";
 import { assertMainClean, beginMainAudit, finishMainAudit, reviewMainAudits, assertMainAuditsReviewed, mainAuditManifest, mainAuditWarnings, } from "./main-audit.js";
-import { errorMessage, errorCode, printable } from "./validation.js";
+import { errorMessage, errorCode, printable, checkFingerprint } from "./validation.js";
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.js";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { agySessions, agyResult, agyInvocation } from "./agy.js";
@@ -58,21 +58,27 @@ function checkInputs(root, spec, source = false) {
     for (const input of spec.inputs) {
         const file = safePath(root, source ? (input.source ?? input.path) : input.path);
         check(existsSync(file), `缺少输入：${input.path}`);
-        check(fingerprint(file) === input.sha256, `输入指纹不符：${input.path}`);
+        checkFingerprint(input.sha256, fingerprint(file), `输入指纹不符：${input.path}`);
     }
 }
 function checkDefinition(ctx, snap, root) {
     const task = readTask(root, ctx.cfg, snap.spec.id);
-    check(task.definition === snap.definition, "任务定义已变化，需要重新派发或重新确认");
-    check(fingerprint(safePath(root, "nexus.config.json")) === snap.nexusHash, "工作树后端配置已变化，旧派发记录失效");
-    check(sha(JSON.stringify(config(root))) === snap.configHash, "项目配置已变化，旧派发记录失效");
+    checkFingerprint(snap.definition, task.definition, "任务定义已变化，需要重新派发或重新确认");
+    checkFingerprint(snap.nexusHash, fingerprint(safePath(root, "nexus.config.json")), "工作树后端配置已变化，旧派发记录失效");
+    checkFingerprint(snap.configHash, sha(JSON.stringify(config(root))), "项目配置已变化，旧派发记录失效");
     for (const rule of snap.rules)
-        check(fingerprint(safePath(root, rule.path)) === rule.sha256, `公共规则已变化：${rule.path}`);
+        checkFingerprint(rule.sha256, fingerprint(safePath(root, rule.path)), `公共规则已变化：${rule.path}`);
     return task;
+}
+function launchStatusError(status, id, action) {
+    const message = `状态 ${status} 不能${action}`;
+    return status === "待验收"
+        ? `${message}；需要返工时，先执行 task rework ${id} --message-file <JSON 路径>，JSON 填写 defects、reproduce、criteria；登记后再执行 task resume ${id}。交付和基准都无需调整时继续 verify 和独立审查，再 accept`
+        : message;
 }
 function prepare(ctx, id, refresh = false) {
     const task = readTask(ctx.root, ctx.cfg, id);
-    check(["待认领", "返工", "中断", "受阻", "执行中"].includes(task.status), `状态 ${task.status} 不能派发或建树`);
+    check(["待认领", "返工", "中断", "受阻", "执行中"].includes(task.status), launchStatusError(task.status, id, "派发或建树"));
     assertCommitted(ctx.root, [`${ctx.cfg.tasksDir}/${id}.md`, "nexus.config.json", ...ctx.cfg.rules]);
     checkInputs(ctx.root, task.spec, true);
     // start copies untracked inputs into the task tree; unless ignored they dirty it and verify can never pass.
@@ -122,7 +128,7 @@ function prepare(ctx, id, refresh = false) {
             return snap;
         }
         checkDefinition(ctx, old, existsSync(worktree(ctx, old)) ? worktree(ctx, old) : ctx.root);
-        check(old.definition === snap.definition, "旧任务定义不同，保留现场并由协调者处理");
+        checkFingerprint(old.definition, snap.definition, "旧任务定义不同，保留现场并由协调者处理");
         return old;
     }
     return snap;
@@ -265,7 +271,8 @@ function verificationInfo(ctx, id, head) {
         return null;
     try {
         const latest = readPointer(pointer), file = safePath(ctx.mainRoot, relative(ctx.mainRoot, latest.file)), receipt = readVerification(file);
-        check(!latest.sha256 || fingerprint(file) === latest.sha256, "验证材料指纹变化");
+        if (latest.sha256)
+            checkFingerprint(latest.sha256, fingerprint(file), `验证材料指纹变化：${file}`);
         if (receipt.passed)
             assertReceiptIntegrity(ctx, receipt);
         let matchesHead = receipt.commit === head;
@@ -283,21 +290,27 @@ function verificationInfo(ctx, id, head) {
 function assertReceiptIntegrity(ctx, receipt) {
     check(receipt.passed, "正式验收引用的独立验证未通过");
     for (const audit of receipt.mainAudits ?? []) {
-        check(fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, audit.file))) === audit.sha256, "主仓审计或核对记录指纹变化");
+        checkFingerprint(audit.sha256, fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, audit.file))), `主仓审计或核对记录指纹变化：${audit.file}`);
     }
     const output = safePath(ctx.mainRoot, relative(ctx.mainRoot, receipt.output));
-    check(JSON.stringify(outputManifest(output)) === JSON.stringify(receipt.outputs), "独立复跑产物指纹变化");
+    const actualOutputs = outputManifest(output), expectedOutputs = receipt.outputs ?? {};
+    check(JSON.stringify(Object.keys(actualOutputs)) === JSON.stringify(Object.keys(expectedOutputs)), "独立复跑产物文件清单变化");
+    for (const [path, expected] of Object.entries(expectedOutputs))
+        checkFingerprint(expected, actualOutputs[path], `独立复跑产物指纹变化：${path}`);
     check(receipt.commands.length > 0 && receipt.commands.every((cmd) => cmd.exitCode === 0 && !cmd.timedOut), "验证命令记录不完整或失败");
     for (const cmd of receipt.commands) {
-        check(fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, cmd.stdout))) === cmd.stdoutSha256 &&
-            fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, cmd.stderr))) === cmd.stderrSha256, "独立验证日志指纹变化");
+        for (const [path, expected] of [
+            [cmd.stdout, cmd.stdoutSha256],
+            [cmd.stderr, cmd.stderrSha256],
+        ])
+            checkFingerprint(expected, fingerprint(safePath(ctx.mainRoot, relative(ctx.mainRoot, path))), `独立验证日志指纹变化：${path}`);
     }
 }
 function checkedAcceptance(ctx, id) {
     const accepted = readAccepted(join(control(ctx, id), "accepted.json"));
     check(accepted.id === id, "正式验收任务不匹配");
     const file = safePath(ctx.mainRoot, relative(ctx.mainRoot, accepted.receipt));
-    check(fingerprint(file) === accepted.receiptSha256, "正式验收材料指纹变化");
+    checkFingerprint(accepted.receiptSha256, fingerprint(file), `正式验收材料指纹变化：${file}`);
     const receipt = readVerification(file);
     check(receipt.commit === accepted.verifiedCommit && receipt.id === id, "正式验收引用不匹配");
     check(accepted.review.commit === accepted.verifiedCommit && accepted.review.code.passed, "正式验收审查不匹配");
@@ -404,10 +417,23 @@ function promptFor(ctx, snap, resume) {
     const id = snap.spec.id;
     return `${resume ? "继续原会话与原工作树，不重建现场。" : "执行已分配的独立任务。"}\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n先阅读任务与公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task start ${id} --owner agy，自建或恢复工作树。工具启动目录为 ${snap.sourceRoot}。\n建树后只在指定树内白名单操作，不修改主仓或其他工作树；输入副本由 start 按指纹准备。\n目标：${snap.spec.goal}\n范围：${snap.spec.scope}\n每阶段更新同一任务并提交，保留失败命令、输出、现场和下一步。返工时以任务文件最新返工要求为准，逐项核对缺陷、复现命令和通过标准。只标待验收，不自行通过、合入、推送或发布。\n预算 ${snap.config.budgetMinutes} 分钟为进度检查节点，不删除现场；同方法三次失败保存证据并标受阻。\n最终回复给交付 SHA、复现命令、实际结果和未验证范围。`;
 }
+function baseRecovery(ctx, snap) {
+    return `保留原任务工作树 ${printable(worktree(ctx, snap))}；待验收任务先用 task rework ${snap.spec.id} --message-file <JSON 路径> 登记基准改写原因、复现命令和通过标准。再逐文件核对并完成变基或重放交付，在原树提交后用 task resume ${snap.spec.id} --refresh-definition 重新确认基准并交付，随后重新 verify、独立审查和 accept。仅刷新定义不能修复历史`;
+}
+function warnBase(ctx, snap) {
+    const mainHead = git(ctx.mainRoot, "rev-parse", "HEAD");
+    const result = spawnSync("git", ["merge-base", "--is-ancestor", snap.base, mainHead], { cwd: ctx.mainRoot, encoding: "utf8" });
+    check(result.status === 0 || result.status === 1, `无法核对任务固定起点：${result.error?.message ?? result.stderr}`);
+    if (result.status === 0)
+        return undefined;
+    const warning = `固定起点 ${snap.base} 已不是主仓 HEAD ${mainHead} 的祖先；集成可能出现 add/add 冲突。${baseRecovery(ctx, snap)}`;
+    process.stderr.write(`[task] ${warning}\n`);
+    return warning;
+}
 export async function dispatch(ctx, id, options = {}) {
     if (options.dryRun) {
-        const snap = prepare(ctx, id, options.refreshDefinition);
-        return { id, base: snap.base, prompt: promptFor(ctx, snap, false), dryRun: true };
+        const snap = prepare(ctx, id, options.refreshDefinition), baseWarning = warnBase(ctx, snap);
+        return { id, base: snap.base, prompt: promptFor(ctx, snap, false), dryRun: true, ...(baseWarning ? { baseWarning } : {}) };
     }
     const run = launch(ctx, id, false, options);
     return options.detach ? run : waitForRun(ctx, run);
@@ -460,14 +486,15 @@ function launch(ctx, id, resuming, options) {
         const task = checkDefinition(ctx, snap, existsSync(wt) ? wt : snap.sourceRoot);
         const previous = latestRun(ctx, id);
         const conversationId = resuming ? (options.conversation ?? previous?.data.conversationId ?? null) : null;
-        if (resuming) {
+        if (resuming && task.status !== "待验收") {
             text(conversationId, "恢复会话 conversation_id");
             check(!/[\s\0]/.test(text(conversationId, "会话标识")), "非法会话标识");
             check(existsSync(wt), "原工作树缺失，不创建替代现场");
         }
         check(resuming
             ? ["返工", "中断", "受阻", "执行中"].includes(task.status)
-            : ["待认领", "执行中", "中断", "受阻", "返工"].includes(task.status), `状态 ${task.status} 不能启动`);
+            : ["待认领", "执行中", "中断", "受阻", "返工"].includes(task.status), launchStatusError(task.status, id, "启动"));
+        const baseWarning = warnBase(ctx, snap);
         const definitionFile = snapshotPath(ctx, id);
         if (options.refreshDefinition && existsSync(definitionFile)) {
             writeJson(join(control(ctx, id), "definitions", `${nonce()}.json`), loadSnapshot(ctx, id));
@@ -490,6 +517,7 @@ function launch(ctx, id, resuming, options) {
             stderr: join(runDir, "stderr.log"),
             budgetReached: false,
             hardTimeout: false,
+            ...(baseWarning ? { baseWarning } : {}),
         };
         const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), resuming ? "resume" : "dispatch");
         atomic(join(runDir, "main-audit.json"), { file: mainAudit });
@@ -511,7 +539,15 @@ function launch(ctx, id, resuming, options) {
         finally {
             closeSync(runnerLog);
         }
-        return { id, state: "starting", supervisorPid: child.pid, conversationId, runDir, resume: resuming };
+        return {
+            id,
+            state: "starting",
+            supervisorPid: child.pid,
+            conversationId,
+            runDir,
+            resume: resuming,
+            ...(baseWarning ? { baseWarning } : {}),
+        };
     });
 }
 function markInterrupted(ctx, snap, message) {
@@ -719,7 +755,7 @@ function delivery(ctx, snap) {
     checkInputs(wt, snap.spec);
     const commit = git(wt, "rev-parse", "HEAD");
     const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", snap.base, commit], { cwd: wt });
-    check(ancestor.status === 0, "交付提交不是固定起点的后续版本，先确认变基后的任务基准");
+    check(ancestor.status === 0, `交付提交不是固定起点的后续版本，先确认变基后的任务基准；${baseRecovery(ctx, snap)}`);
     const changed = execFileSync("git", ["diff", "--no-renames", "--name-only", "-z", `${snap.base}..${commit}`], {
         cwd: wt,
         encoding: "utf8",
@@ -756,6 +792,9 @@ export async function verify(ctx, id, mainReview) {
             assertMainAuditsReviewed(control(ctx, id));
             result.commit = commit;
             result.changed = changed;
+            const baseWarning = warnBase(ctx, snap);
+            if (baseWarning)
+                result.baseWarning = baseWarning;
             for (const [index, entry] of snap.spec.verify.entries()) {
                 const commandOutput = join(output, String(index));
                 mkdirSync(commandOutput);
@@ -838,13 +877,15 @@ export function accept(ctx, id, reviewPath) {
         assertMainClean(ctx.mainRoot);
         assertMainAuditsReviewed(control(ctx, id));
         const snap = loadSnapshot(ctx, id), { wt, task, commit } = delivery(ctx, snap);
+        const baseWarning = warnBase(ctx, snap);
         const pointer = join(control(ctx, id), "latest-verify.json");
         check(existsSync(pointer), "缺少独立验证材料");
         const latest = readPointer(pointer), file = latest.file;
         const receiptFile = safePath(ctx.mainRoot, relative(ctx.mainRoot, file));
-        check(fingerprint(receiptFile) === latest.sha256, "验证材料指纹变化");
+        checkFingerprint(text(latest.sha256, "验证材料 SHA-256"), fingerprint(receiptFile), `验证材料指纹变化：${receiptFile}`);
         const receipt = readVerification(receiptFile);
-        check(receipt.passed === true && receipt.id === id && receipt.definition === snap.definition, "独立验证未通过或材料不匹配");
+        check(receipt.passed === true && receipt.id === id, "独立验证未通过或材料不匹配");
+        checkFingerprint(snap.definition, receipt.definition, "独立验证定义不匹配，必须重新验证");
         check(receipt.commit === commit, "交付提交已变化，必须重新验证");
         assertReceiptIntegrity(ctx, receipt);
         check(receipt.commands.length === snap.spec.verify.length, "验证命令记录不完整或失败");
@@ -867,6 +908,7 @@ export function accept(ctx, id, reviewPath) {
             review,
             reviewSha256: fingerprint(reviewFile),
             acceptedAt: new Date().toISOString(),
+            ...(baseWarning ? { baseWarning } : {}),
         };
         atomic(join(control(ctx, id), "accepted.json"), accepted);
         const mainWarnings = mainAuditWarnings(control(ctx, id));

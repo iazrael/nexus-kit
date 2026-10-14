@@ -86,6 +86,7 @@ export interface RunInfo {
   endedAt?: string;
   taskStatus?: string;
   mainWarning?: string;
+  baseWarning?: string;
 }
 export interface LaunchResult {
   id: string;
@@ -94,6 +95,7 @@ export interface LaunchResult {
   conversationId: string | null;
   runDir: string;
   resume: boolean;
+  baseWarning?: string;
 }
 export interface RunOptions {
   dryRun?: boolean | undefined;
@@ -127,6 +129,7 @@ export interface Verification {
   changed?: string[];
   outputs?: Record<string, string>;
   mainAudits?: { file: string; sha256: string }[];
+  baseWarning?: string;
   error?: string;
   endedAt?: string;
 }
@@ -150,6 +153,7 @@ export interface Accepted {
   review: Review;
   reviewSha256: string;
   acceptedAt: string;
+  baseWarning?: string;
 }
 export interface VerificationStatus {
   passed?: boolean;

@@ -187,6 +187,8 @@ test("dispatch 预览无副作用；未提交任务与指纹错误拒绝启动",
   const bad = run(root, "dispatch", "cancel-buy");
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /指纹不符/);
+  assert.ok(bad.stderr.includes("期望 SHA-256 " + "0".repeat(64)), bad.stderr);
+  assert.ok(bad.stderr.includes("实际 SHA-256 e5c6fde86910ded72db5cc7afc32f850440d4ef7caa5dbb69f5bdc0d3e39cb3b"), bad.stderr);
 });
 
 test("dispatch 完整交付，status 显示会话；无前置不能启动", async () => {
@@ -299,6 +301,7 @@ test("verify 新目录独立复跑，accept 绑定提交并登记审查依据", 
     head = git(wt, "rev-parse", "HEAD");
   const verified = success(run(root, "verify", "cancel-buy"));
   assert.equal(verified.passed, true);
+  assert.equal(verified.baseWarning, undefined);
   assert.equal(verified.commit, head);
   assert.equal(readFileSync(join(verified.output, "0/result.txt"), "utf8"), "verified");
   const verifiedAgain = success(run(root, "verify", "cancel-buy"));
@@ -1621,10 +1624,176 @@ test("快进提醒清洗提交标题里的控制字符，验收输出带出执�
   const done = await finished(root);
   assert.equal(done.run.state, "completed");
   assert.equal(done.run.mainWarning.includes("\u001b"), false);
+  assert.equal(done.run.baseWarning, undefined);
   success(run(root, "verify", "cancel-buy"));
   const wt = join(root, ".worktrees/cancel-buy");
   const accepted = run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD")));
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.match(JSON.parse(accepted.stdout).mainWarnings[0], /merge/);
   assert.match(accepted.stderr, /主仓.*新提交/);
+});
+
+function fingerprintDiagnostic(result, label) {
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, label);
+  assert.match(result.stderr, /期望 SHA-256 [a-f0-9]{64}；实际 SHA-256 [a-f0-9]{64}/);
+}
+test("指纹诊断覆盖公共规则、后端配置、验证材料、两路日志、产物和审计", () => {
+  for (const kind of ["rule", "config", "receipt", "stdout", "stderr", "output", "audit"]) {
+    const root = repo(),
+      wt = delivered(root),
+      head = git(wt, "rev-parse", "HEAD");
+    if (kind === "rule" || kind === "config") {
+      const path = join(wt, kind === "rule" ? "tasks/协作规则.md" : "nexus.config.json");
+      writeFileSync(path, readFileSync(path, "utf8") + "\n");
+      fingerprintDiagnostic(run(root, "verify", "cancel-buy"), kind === "rule" ? /公共规则已变化/ : /后端配置已变化/);
+      continue;
+    }
+    const verified = success(run(root, "verify", "cancel-buy"));
+    const path =
+      kind === "receipt"
+        ? verified.receipt
+        : kind === "output"
+          ? join(verified.output, "0/result.txt")
+          : kind === "audit"
+            ? verified.mainAudits[0].file
+            : verified.commands[0][kind];
+    writeFileSync(path, readFileSync(path, "utf8") + "\n");
+    fingerprintDiagnostic(run(root, "accept", "cancel-buy", "--review", review(root, head)), /指纹变化/);
+  }
+});
+
+test("待验收拒绝派发和续跑时给出返工登记及续跑步骤，不改任务现场", () => {
+  const root = repo(),
+    wt = delivered(root),
+    before = git(wt, "rev-parse", "HEAD");
+  for (const args of [
+    ["dispatch", "cancel-buy"],
+    ["resume", "cancel-buy"],
+    ["resume", "cancel-buy", "--conversation", "fixture-session"],
+    ["resume", "cancel-buy", "--conversation", "fixture-session", "--refresh-definition"],
+  ]) {
+    const rejected = run(args.includes("--refresh-definition") ? wt : root, ...args);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /待验收/);
+    assert.match(rejected.stderr, /task rework cancel-buy --message-file/);
+    assert.match(rejected.stderr, /task resume cancel-buy/);
+    assert.match(rejected.stderr, /defects.*reproduce.*criteria/);
+    assert.equal(git(wt, "rev-parse", "HEAD"), before);
+  }
+});
+
+function assertBaseWarning(result, base, mainHead) {
+  assert.equal(result.status, 0, result.stderr);
+  const info = JSON.parse(result.stdout);
+  assert.ok(result.stderr.includes(base), result.stderr);
+  assert.ok(result.stderr.includes(mainHead), result.stderr);
+  assert.match(result.stderr, /固定起点.*不是主仓 HEAD.*祖先/);
+  assert.match(result.stderr, /原任务工作树.*变基.*refresh-definition/);
+  assert.match(result.stderr, /待验收.*task rework cancel-buy --message-file.*基准/);
+  assert.match(info.baseWarning, /固定起点/);
+  return info;
+}
+test("主仓在交付后 amend，verify 与 accept 告警但保留有效交付和固定起点", () => {
+  const root = repo(),
+    wt = delivered(root),
+    taskHead = git(wt, "rev-parse", "HEAD"),
+    base = git(root, "rev-parse", "HEAD");
+  git(root, "commit", "--amend", "-m", "rewritten main");
+  const mainHead = git(root, "rev-parse", "HEAD");
+  const verified = assertBaseWarning(run(root, "verify", "cancel-buy"), base, mainHead);
+  assert.equal(verified.passed, true);
+  assert.equal(git(wt, "rev-parse", "HEAD"), taskHead);
+  const accepted = assertBaseWarning(run(root, "accept", "cancel-buy", "--review", review(root, taskHead)), base, mainHead);
+  assert.equal(accepted.status, "通过");
+  assert.equal(success(run(root, "status", "cancel-buy")).tasks[0].acceptance.passed, true);
+  assert.equal(git(root, "rev-parse", "HEAD"), mainHead);
+  assert.equal(JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).base, base);
+});
+
+test("派发预览、分离派发和原会话续跑都提示已改写的主仓起点", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const started = success(run(root, "start", "cancel-buy", "--owner", "executor")),
+    base = started.base;
+  git(root, "commit", "--amend", "-m", "rewritten before dispatch");
+  const mainHead = git(root, "rev-parse", "HEAD");
+  assertBaseWarning(run(root, "dispatch", "cancel-buy", "--dry-run"), base, mainHead);
+  const first = assertBaseWarning(detachedScenario(root, "complete", "dispatch", "cancel-buy"), base, mainHead);
+  const done = await finished(root);
+  assert.equal(done.run.state, "completed");
+  assert.equal(done.run.baseWarning, first.baseWarning);
+  success(run(root, "rework", "cancel-buy", "--message-file", reworkMessage(root)));
+  const resumed = assertBaseWarning(await asyncRun(root, "complete", "resume", "cancel-buy").result, base, mainHead);
+  assert.equal(resumed.state, "completed");
+  assert.equal(resumed.conversationId, done.run.conversationId);
+  assert.equal(JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).base, base);
+  success(run(root, "rework", "cancel-buy", "--message-file", reworkMessage(root)));
+  git(started.worktree, "rebase", "--onto", "main", base);
+  const refreshed = success(await asyncRun(started.worktree, "complete", "resume", "cancel-buy", "--refresh-definition").result);
+  assert.equal(refreshed.baseWarning, undefined);
+  assert.equal(JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).base, mainHead);
+});
+
+test("命令替换的分离派发不持有调用方管道，默认派发仍等待最终交付", async () => {
+  const quote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  for (const detach of [true, false]) {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    const result = spawnSync(
+      "/bin/sh",
+      [
+        "-c",
+        `result=$(${quote(process.execPath)} ${quote(cli)} task dispatch cancel-buy ${detach ? "--detach" : ""}); printf '%s\\n' "$result"`,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 10000,
+        env: { ...process.env, TASK_TEST_SCENARIO: "slow-delivery" },
+      },
+    );
+    const info = success(result);
+    if (detach) {
+      assert.equal(info.state, "starting");
+      assert.ok(["starting", "running"].includes(success(run(root, "status", "cancel-buy")).tasks[0].run.state));
+      assert.equal((await finished(root)).run.state, "completed");
+    } else assert.equal(info.state, "completed");
+  }
+});
+
+test("起点对应 Git 对象缺失时拒绝派发预览，不把检查失败当作没有告警", () => {
+  const root = repo();
+  ready(root);
+  success(run(root, "start", "cancel-buy", "--owner", "executor"));
+  const path = join(root, "research/local/task-control/cancel-buy/definition.json"),
+    snapshot = JSON.parse(readFileSync(path, "utf8"));
+  snapshot.base = "0".repeat(40);
+  writeFileSync(path, JSON.stringify(snapshot));
+  const failed = run(root, "dispatch", "cancel-buy", "--dry-run");
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /无法核对任务固定起点/);
+});
+
+test("任务定义返工并重新确认后，旧验证材料报出新旧定义指纹", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(await asyncRun(root, "complete", "dispatch", "cancel-buy").result);
+  const wt = join(root, ".worktrees/cancel-buy"),
+    verified = success(run(root, "verify", "cancel-buy"));
+  success(run(root, "rework", "cancel-buy", "--message-file", reworkMessage(root)));
+  editTask(wt, (spec) => {
+    spec.goal = "取消后余额和库存都保持不变";
+  });
+  git(wt, "add", "tasks/cancel-buy.md");
+  git(wt, "commit", "-m", "clarify definition");
+  success(await asyncRun(wt, "complete", "resume", "cancel-buy", "--refresh-definition").result);
+  const snapshot = JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8"));
+  const rejected = run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD")));
+  fingerprintDiagnostic(rejected, /定义不匹配/);
+  assert.ok(rejected.stderr.includes("期望 SHA-256 " + snapshot.definition), rejected.stderr);
+  assert.ok(rejected.stderr.includes("实际 SHA-256 " + verified.definition), rejected.stderr);
 });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readlinkSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname, basename, relative } from "node:path";
-import { check, json, object, text, errorCode, safePath, printable } from "./validation.js";
+import { check, json, object, text, errorCode, safePath, printable, checkFingerprint } from "./validation.js";
 import { gitOutput as git, atomic as save } from "./io.js";
 import { fingerprint, nonce } from "./definition.js";
 function hash(value) {
@@ -129,7 +129,7 @@ export function reviewMainAudits(control, reviewFile) {
         check(/^[a-z0-9-]+\.json$/.test(id), "主仓审计 id 不合法");
         const file = safePath(control, `main-audit/${id}`), audit = readAudit(file);
         check(!audit.passed, "核对记录只能引用异常审计");
-        check(o.sha256 === fingerprint(file), "主仓审计指纹不匹配");
+        checkFingerprint(text(o.sha256, "主仓审计 sha256"), fingerprint(file), `主仓审计指纹不匹配：${file}`);
         const record = { id, sha256: o.sha256, reviewer: review.reviewer, reason: review.reason };
         const target = safePath(control, `main-audit/reviews/${id}`);
         const existing = existsSync(target);
@@ -149,7 +149,7 @@ function assertReference(control, pointer) {
     check(dirname(file) === join(control, "main-audit"), "主仓审计路径不匹配");
     readAudit(safePath(control, `main-audit/${basename(file)}`));
     if (reference.sha256 !== undefined)
-        check(reference.sha256 === fingerprint(file), "主仓审计指纹变化");
+        checkFingerprint(text(reference.sha256, "主仓审计 sha256"), fingerprint(file), `主仓审计指纹变化：${file}`);
 }
 function assertReferences(control) {
     const refs = safePath(control, "main-audit-refs");
@@ -181,7 +181,8 @@ export function assertMainAuditsReviewed(control) {
         const review = object(json(reviewFile), "主仓核对登记");
         text(review.reviewer, "reviewer");
         text(review.reason, "reason");
-        check(review.id === id && review.sha256 === fingerprint(file), `主仓审计或核对登记已变化：${file}`);
+        check(review.id === id, `主仓核对登记 id 不匹配：${file}`);
+        checkFingerprint(text(review.sha256, "主仓核对 sha256"), fingerprint(file), `主仓审计或核对登记已变化：${file}`);
     }
 }
 export function mainAuditWarnings(control) {

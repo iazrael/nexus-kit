@@ -55,6 +55,7 @@ export function readRun(file: string): RunInfo {
     "endedAt",
     "taskStatus",
     "mainWarning",
+    "baseWarning",
   ])
     if (o[key] !== undefined) text(o[key], key);
   if (o.exitCode !== undefined)
@@ -67,7 +68,7 @@ export function readVerification(file: string): Verification {
   const o = object(json(file), "验证材料");
   fields(o, ["id", "startedAt", "definition", "output"], ["passed"]);
   if (o.commit !== undefined) sha(o.commit, "commit", 40);
-  for (const key of ["error", "endedAt"]) if (o[key] !== undefined) text(o[key], key);
+  for (const key of ["error", "endedAt", "baseWarning"]) if (o[key] !== undefined) text(o[key], key);
   if (o.changed !== undefined) stringList(o.changed, "changed");
   check(Array.isArray(o.commands), "commands 必须为数组");
   for (const value of o.commands) {
@@ -112,6 +113,7 @@ export function readAccepted(file: string): Accepted {
   const o = object(json(file), "验收记录");
   fields(o, ["id", "status", "verifiedCommit", "acceptanceCommit", "receipt", "receiptSha256", "reviewSha256", "acceptedAt"]);
   check(o.status === "通过", "验收状态必须为通过");
+  if (o.baseWarning !== undefined) text(o.baseWarning, "baseWarning");
   sha(o.verifiedCommit, "verifiedCommit", 40);
   sha(o.acceptanceCommit, "acceptanceCommit", 40);
   sha(o.receiptSha256, "receiptSha256", 64);

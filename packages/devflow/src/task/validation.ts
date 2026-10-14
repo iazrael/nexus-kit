@@ -4,6 +4,10 @@ import { resolve, relative, dirname, isAbsolute, sep } from "node:path";
 export function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw new Error(message);
 }
+/** Fingerprint mismatches report both sides without exposing file contents. */
+export function checkFingerprint(expected: string, actual: string, message: string): void {
+  check(actual === expected, `${message}；期望 SHA-256 ${expected}；实际 SHA-256 ${actual}`);
+}
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
