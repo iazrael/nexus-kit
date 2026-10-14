@@ -5,6 +5,9 @@
 
 ## [Unreleased]
 
+- 新增：`@nexus-kit/runtime/assets` 图像资源。`createLoader`：加载调度器，任务按档位（0 挡门 / 1 可见 / 2 附近 / 3 空闲）与次序值排队，在飞的不打断，并发上限默认 6；同一 key（通常是 URL）在飞或排队时共用结果、不发第二次；每次调用可带 AbortSignal，全部取消且还在排队才出队；`hold` 关键闸门在关键资源有结论或封顶时限前压住档位 2、3。`createImageCache`：下载并解码成 ImageBitmap，引用计数持有，引用为零进 LRU，超预算淘汰时立即 `close()` 并通知宿主；失败不进缓存。`mapLimit`（限并发、按序返回）与 `whenIdle`（空闲执行，老 iOS 退定时器）。传入 `perf` 时登记 `assets.bitmapMB`、`assets.bitmaps`、`assets.queued`、`assets.running` 进水位长线。
+- 内部：`pnpm e2e` 增加图像资源一条（慢网下关键闸门、并发上限、同图只下一次、淘汰即关位图、指标进水位）。
+
 ## [0.5.0] - 2026-10-14
 
 - 新增：`@nexus-kit/runtime/perf` 性能采集。`createPerf` 每 5 秒采一个水位点（帧率、卡顿、最差一帧、JS 堆、DOM 节点、存储用量、长任务，加宿主经 `registerGauge` 登记的指标；读不到记 null），环形长线约 2.8 小时，`trend()` 给出首尾、净增与峰值；每个会话最后 120 个点跨会话保留（多窗口各写各的行），上一局闪退前的水位下一局能导出；`captureBoot` 采启动画像（导航分段、按类型的网络字节与缓存命中、最慢资源、是否 SW 接管），留最近 5 次；`milestone` / `span` / `spanAsync` 记时间点与阶段耗时；帧统计支持 rAF 自测与宿主每帧 `frameStart/frameEnd`；可选 `installGlCounter` 记 GL 对象净存活数与纹理字节。数据进诊断文件：启动画像、性能走势、其他会话最后的水位三节，及「性能数据（JSONL）」附录。

@@ -21,7 +21,7 @@
     "worktree:isolate": "node packages/devflow/src/cli.ts worktree isolate",
     "dist:check": "node scripts/check-dist-fresh.ts",
     "check": "pnpm docs:check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm dist:check && node scripts/check-boot-es5.ts && pnpm -F nexus-webapp-template test && pnpm -F nexus-webapp-template build",
-    "e2e": "node scripts/e2e-upgrade.ts && node scripts/e2e-diagnostics.ts",
+    "e2e": "node scripts/e2e-upgrade.ts && node scripts/e2e-diagnostics.ts && node scripts/e2e-assets.ts",
     "init-app": "node scripts/init-app.ts"
   },
   "devDependencies": {
