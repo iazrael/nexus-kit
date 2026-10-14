@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-14
+
 - 新增：`@nexus-kit/runtime/perf` 性能采集。`createPerf` 每 5 秒采一个水位点（帧率、卡顿、最差一帧、JS 堆、DOM 节点、存储用量、长任务，加宿主经 `registerGauge` 登记的指标；读不到记 null），环形长线约 2.8 小时，`trend()` 给出首尾、净增与峰值；每个会话最后 120 个点跨会话保留（多窗口各写各的行），上一局闪退前的水位下一局能导出；`captureBoot` 采启动画像（导航分段、按类型的网络字节与缓存命中、最慢资源、是否 SW 接管），留最近 5 次；`milestone` / `span` / `spanAsync` 记时间点与阶段耗时；帧统计支持 rAF 自测与宿主每帧 `frameStart/frameEnd`；可选 `installGlCounter` 记 GL 对象净存活数与纹理字节。数据进诊断文件：启动画像、性能走势、其他会话最后的水位三节，及「性能数据（JSONL）」附录。
 - 新增：`/log` 的 `registerAppendix` 与 `exportText({ appendix })`：附录排在日志之后，复制到聊天可不带。
 - 新增：模板接入性能采集：`observe.ts` 创建并启动，挂载时（`onAppMounted`）与 load 后各采一次启动画像；复制诊断内容不带 JSONL 附录。
