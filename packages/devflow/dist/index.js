@@ -3,3 +3,7 @@ export * from "./deploy.js";
 export * from "./docs-audit.js";
 export * from "./check-changelog.js";
 export * from "./hooks.js";
+export * from "./worktree-lib.js";
+export * from "./worktree.js";
+export * from "./worktree-procs.js";
+export * from "./release.js";

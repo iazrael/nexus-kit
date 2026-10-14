@@ -1,6 +1,6 @@
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
- * check-changelog、deploy）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
+ * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
  * 指明哪一项——不静默套默认值掩盖写错的配置。
  *
  * 部署参数允许环境变量覆盖（NEXUS_DEPLOY_TARGET / _ROOT / _PUBLIC_URL / _KEEP），便于临时
@@ -30,6 +30,37 @@ export interface DeployConfig {
   edgeTtlProbes: string[];
 }
 
+export interface WorktreeConfig {
+  /** 工作树父目录（相对主仓库根）；null = 主仓库同级的「<仓库目录名>-worktrees」 */
+  dir: string | null;
+  /** 主干分支：合入目标，也是新工作树的默认起点 */
+  base: string;
+  /** 主仓库的预览端口；工作树从 portBase + portStep 起按 portStep 分配 */
+  portBase: number;
+  portStep: number;
+  /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根），也是 isolate 可选的名字 */
+  share: string[];
+  /** 回收时视为可再生的额外被忽略路径（相对仓库根，按路径段前缀） */
+  disposable: string[];
+  /** 建树后在新工作树里依次执行的命令（argv 数组） */
+  postCreate: string[][];
+  /** 合入后在主仓库依次执行的命令；失败即非零退出 */
+  postMerge: string[][];
+}
+
+export interface ReleaseConfig {
+  /** 发版链里部署前后的固定步骤（argv 数组，主仓库执行），每步之后核对 HEAD 未变 */
+  steps: string[][];
+  /** 发版链放锁的有效分钟数（进程被强杀留残锁时到期自动失效） */
+  lockTtlMin: number;
+  /** release --lock 手动放锁的默认有效分钟数（落款与门禁期间冻结主干） */
+  holdTtlMin: number;
+  /** 打 tag 后推送主干与 tag 到 origin */
+  push: boolean;
+  /** 推送后用 gh 创建 GitHub Release（正文 = 落款小节全量条目） */
+  githubRelease: boolean;
+}
+
 export interface NexusConfig {
   /** 仓库根（配置文件所在目录） */
   repoRoot: string;
@@ -40,6 +71,8 @@ export interface NexusConfig {
   /** 文档审计：文档根、存档目录、设计稿目录、索引文件（活文档必须登记在这里） */
   docs: { root: string; archiveDir: string; designDir: string; index: string };
   deploy: DeployConfig | null;
+  worktree: WorktreeConfig;
+  release: ReleaseConfig;
 }
 
 export const CONFIG_FILE = "nexus.config.json";
@@ -68,7 +101,47 @@ function posInt(o: Obj, key: string, where: string, fallback: number): number {
   return v;
 }
 
+function bool(o: Obj, key: string, where: string, fallback: boolean): boolean {
+  const v = o[key];
+  if (v === undefined) return fallback;
+  if (typeof v !== "boolean") throw new Error(`[nexus.config] ${where}.${key} 必须是布尔值`);
+  return v;
+}
+function section(raw: Obj, key: string): Obj {
+  const v = raw[key];
+  if (v === undefined) return {};
+  if (!isObj(v)) throw new Error(`[nexus.config] ${key} 必须是对象`);
+  return v;
+}
+/** 仓库内相对路径：不得绝对、不得含 .. 段（会拼进软链与删除判定）；尾斜杠去掉 */
+function relPathList(o: Obj, key: string, where: string, fallback: string[]): string[] {
+  return strList(o, key, where, fallback).map((p) => {
+    if (p === "" || p.startsWith("/") || p.split("/").includes("..")) {
+      throw new Error(`[nexus.config] ${where}.${key} 的 ${JSON.stringify(p)} 必须是仓库内相对路径（不以 / 开头、不含 ..）`);
+    }
+    return p.replace(/\/+$/, "");
+  });
+}
+/** 命令清单：每条是非空字符串数组（argv，不经 shell） */
+function commandList(o: Obj, key: string, where: string, fallback: string[][], allowEmpty: boolean): string[][] {
+  const v = o[key];
+  if (v === undefined) return fallback;
+  const ok =
+    Array.isArray(v) &&
+    (allowEmpty || v.length > 0) &&
+    v.every((c) => Array.isArray(c) && c.length > 0 && c.every((x) => typeof x === "string" && x !== ""));
+  if (!ok) throw new Error(`[nexus.config] ${where}.${key} 必须是${allowEmpty ? "" : "非空的"}命令数组，每条形如 ["pnpm", "build"]`);
+  return v as string[][];
+}
+
 export const DEFAULT_PRIVATE_REQUIRED = ["/", "/sw.js", "/version.json", "/manifest.webmanifest"];
+
+/** 发版链默认步骤：完成标准 → 构建 → 部署（部署自带冒烟与失败回滚） */
+export const DEFAULT_RELEASE_STEPS: string[][] = [
+  ["pnpm", "check"],
+  ["pnpm", "build"],
+  ["pnpm", "run", "deploy"],
+];
 
 export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.ProcessEnv = {}): NexusConfig {
   if (!isObj(raw)) throw new Error("[nexus.config] 顶层必须是对象");
@@ -108,6 +181,31 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
     }
   }
 
+  const wt = section(raw, "worktree");
+  const base = str(wt, "base", "worktree", deploy?.branch ?? "main");
+  if (!/^[\w./-]+$/.test(base) || base.startsWith("-")) throw new Error("[nexus.config] worktree.base 不是合法分支名");
+  const portBase = posInt(wt, "portBase", "worktree", 4173);
+  if (portBase > 65_000) throw new Error("[nexus.config] worktree.portBase 必须小于 65000");
+  const worktree: WorktreeConfig = {
+    dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
+    base,
+    portBase,
+    portStep: posInt(wt, "portStep", "worktree", 10),
+    share: relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]),
+    disposable: relPathList(wt, "disposable", "worktree", []),
+    postCreate: commandList(wt, "postCreate", "worktree", [["pnpm", "install", "--frozen-lockfile"]], true),
+    postMerge: commandList(wt, "postMerge", "worktree", [["pnpm", "build"]], true),
+  };
+
+  const rel = section(raw, "release");
+  const release: ReleaseConfig = {
+    steps: commandList(rel, "steps", "release", DEFAULT_RELEASE_STEPS, false),
+    lockTtlMin: posInt(rel, "lockTtlMin", "release", 30),
+    holdTtlMin: posInt(rel, "holdTtlMin", "release", 120),
+    push: bool(rel, "push", "release", true),
+    githubRelease: bool(rel, "githubRelease", "release", false),
+  };
+
   return {
     repoRoot,
     appRoot,
@@ -122,6 +220,8 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
       index: str(docs, "index", "docs", "CLAUDE.md"),
     },
     deploy,
+    worktree,
+    release,
   };
 }
 

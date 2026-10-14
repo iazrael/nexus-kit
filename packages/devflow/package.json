@@ -1,7 +1,7 @@
 {
   "name": "@nexus-kit/devflow",
-  "version": "0.2.0",
-  "description": "工程流程：活文档审计、CHANGELOG 提交门禁、git hooks、部署到自有服务器（冒烟 + 自动回滚）",
+  "version": "0.3.0",
+  "description": "工程流程：活文档审计、CHANGELOG 提交门禁、git hooks、部署到自有服务器（冒烟 + 自动回滚）、并行开发工作树、发版与发版锁",
   "type": "module",
   "bin": {
     "nexus-devflow": "./dist/cli.js"

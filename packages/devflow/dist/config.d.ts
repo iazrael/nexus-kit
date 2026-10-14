@@ -18,6 +18,35 @@ export interface DeployConfig {
     /** 公网边缘 TTL 探针：不带哈希、每版都在的常驻文件 */
     edgeTtlProbes: string[];
 }
+export interface WorktreeConfig {
+    /** 工作树父目录（相对主仓库根）；null = 主仓库同级的「<仓库目录名>-worktrees」 */
+    dir: string | null;
+    /** 主干分支：合入目标，也是新工作树的默认起点 */
+    base: string;
+    /** 主仓库的预览端口；工作树从 portBase + portStep 起按 portStep 分配 */
+    portBase: number;
+    portStep: number;
+    /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根），也是 isolate 可选的名字 */
+    share: string[];
+    /** 回收时视为可再生的额外被忽略路径（相对仓库根，按路径段前缀） */
+    disposable: string[];
+    /** 建树后在新工作树里依次执行的命令（argv 数组） */
+    postCreate: string[][];
+    /** 合入后在主仓库依次执行的命令；失败即非零退出 */
+    postMerge: string[][];
+}
+export interface ReleaseConfig {
+    /** 发版链里部署前后的固定步骤（argv 数组，主仓库执行），每步之后核对 HEAD 未变 */
+    steps: string[][];
+    /** 发版链放锁的有效分钟数（进程被强杀留残锁时到期自动失效） */
+    lockTtlMin: number;
+    /** release --lock 手动放锁的默认有效分钟数（落款与门禁期间冻结主干） */
+    holdTtlMin: number;
+    /** 打 tag 后推送主干与 tag 到 origin */
+    push: boolean;
+    /** 推送后用 gh 创建 GitHub Release（正文 = 落款小节全量条目） */
+    githubRelease: boolean;
+}
 export interface NexusConfig {
     /** 仓库根（配置文件所在目录） */
     repoRoot: string;
@@ -36,9 +65,13 @@ export interface NexusConfig {
         index: string;
     };
     deploy: DeployConfig | null;
+    worktree: WorktreeConfig;
+    release: ReleaseConfig;
 }
 export declare const CONFIG_FILE = "nexus.config.json";
 export declare const DEFAULT_PRIVATE_REQUIRED: string[];
+/** 发版链默认步骤：完成标准 → 构建 → 部署（部署自带冒烟与失败回滚） */
+export declare const DEFAULT_RELEASE_STEPS: string[][];
 export declare function parseNexusConfig(raw: unknown, repoRoot: string, env?: NodeJS.ProcessEnv): NexusConfig;
 /** 从 cwd 向上找 nexus.config.json；找不到抛错 */
 export declare function loadNexusConfig(cwd?: string, env?: NodeJS.ProcessEnv): NexusConfig;

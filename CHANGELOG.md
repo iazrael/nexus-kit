@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-14
+
+- 新增：`nexus-devflow worktree new|merge|rm|ls|isolate|hook-create|hook-remove` —— 并行开发工作树：共享项软链回主仓库、预览端口登记、合入只快进（分叉拒绝、并发合入拒绝、被钩子拦下自动还原残留、合入后在主仓库验证）、回收先停服务再删目录并拦截不可再生文件；接 Claude Code 的 WorktreeCreate/WorktreeRemove 钩子。配置在 `nexus.config.json` 的 `worktree` 段。
+- 新增：`nexus-devflow release [--ack|--lock|--unlock]` —— 发版一条命令（落款校验 → 放锁 → 检查/构建/部署 → 打 tag 推送 → 可选 GitHub Release → 收锁）；`install-hooks` 额外写入 reference-transaction 发版锁钩子，发版期间冻结主干、凭 `NEXUS_RELEASE_TOKEN` 放行。已接入的项目升级后执行一次 `pnpm hooks` 才会装上新钩子。
+- 新增：模板接入 `worktree:*` / `release*` 脚本与 `.claude/settings.json` 钩子，交付规范 §5 发布、§6 并行开发改为以这两组命令为准。
+
 ## [0.2.0] - 2026-10-13
 
 - 破坏性：「稍后」改为有效期制——同一构建在本次打开期间不再自动提醒，最长 24 小时后心跳或切前台命中会再提醒（`dismissTtlMs` 可配）。此前同一构建在整个会话内永不再提醒；接入方无需改代码。

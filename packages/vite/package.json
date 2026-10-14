@@ -1,6 +1,6 @@
 {
   "name": "@nexus-kit/vite",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "构建期：nexusPwa 插件（版本注入、version.json、VitePWA 红线配置、运行时缓存分区）与构建后门禁",
   "type": "module",
   "exports": {

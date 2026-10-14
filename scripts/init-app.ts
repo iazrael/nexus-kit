@@ -9,6 +9,7 @@
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { installHooks } from "../packages/devflow/src/hooks.ts";
 import { rewriteKitDeps, KIT_REPO } from "./init-app-lib.ts";
 
 const KIT = resolve(import.meta.dirname, "..");
@@ -65,9 +66,14 @@ replaceIn("src/app.tsx", [["Nexus App", title]]);
 replaceIn("src/pwa.ts", [['storagePrefix: "nexus-app"', `storagePrefix: "${appId}"`]]);
 replaceIn("CLAUDE.md", [["Nexus App", title]]);
 
+// .githooks/ 必须入库：core.hooksPath 是相对路径，git 在每个工作树里按该树的根目录找钩子，
+// 不入库的话工作树里没有 CHANGELOG 门禁与发版锁。这里只写文件，core.hooksPath 由 pnpm hooks 设置
+installHooks(dest, () => {});
+
 console.log(`[init-app] 已生成 ${dest}（kit v${kitVersion}，依赖来自 ${KIT_REPO}）
 下一步：
   cd ${target}
   git init -b main && pnpm install && pnpm hooks
+  git add -A && git commit -m "chore: 从 nexus-kit 模板生成"   # .githooks/ 随首个提交入库
   # 换掉 public/ 下的占位图标；填 nexus.config.json 的 deploy 段；改 docs/需求/需求.md
   pnpm check`);

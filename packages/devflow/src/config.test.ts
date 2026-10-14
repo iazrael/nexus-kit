@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_PRIVATE_REQUIRED, loadNexusConfig, parseNexusConfig } from "./config.ts";
+import { DEFAULT_PRIVATE_REQUIRED, DEFAULT_RELEASE_STEPS, loadNexusConfig, parseNexusConfig } from "./config.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -48,8 +48,81 @@ describe("parseNexusConfig", () => {
     });
   });
 
+  it("工作树段缺省值：主干随部署分支、端口 4173 起步、共享应用根构建计数器、建树装依赖、合入后构建", () => {
+    expect(parseNexusConfig({ appRoot: "apps/web", deploy: { ...DEPLOY, branch: "trunk" } }, "/repo").worktree).toEqual({
+      dir: null,
+      base: "trunk",
+      portBase: 4173,
+      portStep: 10,
+      share: ["apps/web/.build-number"],
+      disposable: [],
+      postCreate: [["pnpm", "install", "--frozen-lockfile"]],
+      postMerge: [["pnpm", "build"]],
+    });
+    expect(parseNexusConfig({}, "/repo").worktree).toMatchObject({ base: "main", share: [".build-number"] });
+  });
+
+  it("工作树段显式值原样采纳，路径尾斜杠规整", () => {
+    const wt = parseNexusConfig(
+      {
+        worktree: {
+          dir: "../wt",
+          base: "dev",
+          portBase: 5000,
+          portStep: 2,
+          share: ["research/", ".build-number"],
+          disposable: ["public/sound"],
+          postCreate: [],
+          postMerge: [
+            ["pnpm", "assets:refresh"],
+            ["pnpm", "build"],
+          ],
+        },
+      },
+      "/repo",
+    ).worktree;
+    expect(wt).toEqual({
+      dir: "../wt",
+      base: "dev",
+      portBase: 5000,
+      portStep: 2,
+      share: ["research", ".build-number"],
+      disposable: ["public/sound"],
+      postCreate: [],
+      postMerge: [
+        ["pnpm", "assets:refresh"],
+        ["pnpm", "build"],
+      ],
+    });
+  });
+
+  it("发版段缺省值与显式值", () => {
+    expect(parseNexusConfig({}, "/repo").release).toEqual({
+      steps: DEFAULT_RELEASE_STEPS,
+      lockTtlMin: 30,
+      holdTtlMin: 120,
+      push: true,
+      githubRelease: false,
+    });
+    expect(
+      parseNexusConfig({ release: { steps: [["pnpm", "check:release"]], lockTtlMin: 45, push: false, githubRelease: true } }, "/repo")
+        .release,
+    ).toEqual({ steps: [["pnpm", "check:release"]], lockTtlMin: 45, holdTtlMin: 120, push: false, githubRelease: true });
+  });
+
   it.each([
     [null, /顶层/],
+    [{ worktree: 1 }, /worktree 必须是对象/],
+    [{ worktree: { share: ["/abs"] } }, /worktree\.share/],
+    [{ worktree: { share: ["../up"] } }, /worktree\.share/],
+    [{ worktree: { disposable: ["a/../../b"] } }, /worktree\.disposable/],
+    [{ worktree: { postMerge: [[]] } }, /worktree\.postMerge/],
+    [{ worktree: { postCreate: ["pnpm install"] } }, /worktree\.postCreate/],
+    [{ worktree: { portBase: 70000 } }, /portBase/],
+    [{ worktree: { base: "-x" } }, /worktree\.base/],
+    [{ release: [] }, /release 必须是对象/],
+    [{ release: { steps: [] } }, /release\.steps/],
+    [{ release: { push: "yes" } }, /release\.push/],
     [{ changelog: [] }, /changelog 必须是对象/],
     [{ docs: 1 }, /docs 必须是对象/],
     [{ appRoot: "" }, /appRoot/],

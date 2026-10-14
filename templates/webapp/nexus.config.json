@@ -9,5 +9,20 @@
     "localPort": 8888,
     "keep": 5,
     "branch": "main"
+  },
+  "worktree": {
+    "portBase": 4173,
+    "share": [".build-number"],
+    "postCreate": [["pnpm", "install", "--frozen-lockfile"]],
+    "postMerge": [["pnpm", "build"]]
+  },
+  "release": {
+    "steps": [
+      ["pnpm", "check"],
+      ["pnpm", "build"],
+      ["pnpm", "run", "deploy"]
+    ],
+    "push": true,
+    "githubRelease": false
   }
 }

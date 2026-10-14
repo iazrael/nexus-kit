@@ -1,6 +1,6 @@
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
- * check-changelog、deploy）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
+ * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
  * 指明哪一项——不静默套默认值掩盖写错的配置。
  *
  * 部署参数允许环境变量覆盖（NEXUS_DEPLOY_TARGET / _ROOT / _PUBLIC_URL / _KEEP），便于临时
@@ -36,7 +36,50 @@ function posInt(o, key, where, fallback) {
         throw new Error(`[nexus.config] ${where}.${key} 必须是正整数`);
     return v;
 }
+function bool(o, key, where, fallback) {
+    const v = o[key];
+    if (v === undefined)
+        return fallback;
+    if (typeof v !== "boolean")
+        throw new Error(`[nexus.config] ${where}.${key} 必须是布尔值`);
+    return v;
+}
+function section(raw, key) {
+    const v = raw[key];
+    if (v === undefined)
+        return {};
+    if (!isObj(v))
+        throw new Error(`[nexus.config] ${key} 必须是对象`);
+    return v;
+}
+/** 仓库内相对路径：不得绝对、不得含 .. 段（会拼进软链与删除判定）；尾斜杠去掉 */
+function relPathList(o, key, where, fallback) {
+    return strList(o, key, where, fallback).map((p) => {
+        if (p === "" || p.startsWith("/") || p.split("/").includes("..")) {
+            throw new Error(`[nexus.config] ${where}.${key} 的 ${JSON.stringify(p)} 必须是仓库内相对路径（不以 / 开头、不含 ..）`);
+        }
+        return p.replace(/\/+$/, "");
+    });
+}
+/** 命令清单：每条是非空字符串数组（argv，不经 shell） */
+function commandList(o, key, where, fallback, allowEmpty) {
+    const v = o[key];
+    if (v === undefined)
+        return fallback;
+    const ok = Array.isArray(v) &&
+        (allowEmpty || v.length > 0) &&
+        v.every((c) => Array.isArray(c) && c.length > 0 && c.every((x) => typeof x === "string" && x !== ""));
+    if (!ok)
+        throw new Error(`[nexus.config] ${where}.${key} 必须是${allowEmpty ? "" : "非空的"}命令数组，每条形如 ["pnpm", "build"]`);
+    return v;
+}
 export const DEFAULT_PRIVATE_REQUIRED = ["/", "/sw.js", "/version.json", "/manifest.webmanifest"];
+/** 发版链默认步骤：完成标准 → 构建 → 部署（部署自带冒烟与失败回滚） */
+export const DEFAULT_RELEASE_STEPS = [
+    ["pnpm", "check"],
+    ["pnpm", "build"],
+    ["pnpm", "run", "deploy"],
+];
 export function parseNexusConfig(raw, repoRoot, env = {}) {
     if (!isObj(raw))
         throw new Error("[nexus.config] 顶层必须是对象");
@@ -84,6 +127,31 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
                 throw new Error(`[nexus.config] deploy 路径 ${p} 只能含字母、数字与 _ . / -，且以 / 开头`);
         }
     }
+    const wt = section(raw, "worktree");
+    const base = str(wt, "base", "worktree", deploy?.branch ?? "main");
+    if (!/^[\w./-]+$/.test(base) || base.startsWith("-"))
+        throw new Error("[nexus.config] worktree.base 不是合法分支名");
+    const portBase = posInt(wt, "portBase", "worktree", 4173);
+    if (portBase > 65_000)
+        throw new Error("[nexus.config] worktree.portBase 必须小于 65000");
+    const worktree = {
+        dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
+        base,
+        portBase,
+        portStep: posInt(wt, "portStep", "worktree", 10),
+        share: relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]),
+        disposable: relPathList(wt, "disposable", "worktree", []),
+        postCreate: commandList(wt, "postCreate", "worktree", [["pnpm", "install", "--frozen-lockfile"]], true),
+        postMerge: commandList(wt, "postMerge", "worktree", [["pnpm", "build"]], true),
+    };
+    const rel = section(raw, "release");
+    const release = {
+        steps: commandList(rel, "steps", "release", DEFAULT_RELEASE_STEPS, false),
+        lockTtlMin: posInt(rel, "lockTtlMin", "release", 30),
+        holdTtlMin: posInt(rel, "holdTtlMin", "release", 120),
+        push: bool(rel, "push", "release", true),
+        githubRelease: bool(rel, "githubRelease", "release", false),
+    };
     return {
         repoRoot,
         appRoot,
@@ -98,6 +166,8 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
             index: str(docs, "index", "docs", "CLAUDE.md"),
         },
         deploy,
+        worktree,
+        release,
     };
 }
 /** 从 cwd 向上找 nexus.config.json；找不到抛错 */

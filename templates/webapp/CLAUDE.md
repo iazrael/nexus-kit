@@ -42,13 +42,17 @@
 - React + Tailwind；可交互 UI 放进 `.safe-area` 容器。
 - PWA 配置只写在 `pwa.config.ts`；SW 只经 `src/pwa.ts` 的控制器注册；任何路径不得在用户未点击时刷新页面。
 - 常用命令：`pnpm dev`、`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（含构建后门禁）、`pnpm docs:check`、
-  `pnpm hooks`（clone 后执行一次，启用 CHANGELOG 门禁）、`pnpm run deploy`（生产部署，不能写 `pnpm deploy`）。
+  `pnpm hooks`（clone 后执行一次，启用 CHANGELOG 门禁与发版锁）、`pnpm release`（发版一条命令，见交付规范 §5）、
+  `pnpm run deploy`（生产部署，不能写 `pnpm deploy`）。
+- 并行开发：`pnpm worktree:new|merge|rm|ls`（见交付规范 §6）；不手工 `git worktree add/remove`，不用 `git stash`。
 - 实机验收 URL 一律带 `?nosw=1`。
 
 ## 3. 工作流
 
-- **开工**：先读《工程质量与交付规范》与《Web 运行时开发规范》；`git status` 查并行线，有别的改动线在跑就开
-  工作树，不在主工作区直接改。
+- **开工**：先读《工程质量与交付规范》与《Web 运行时开发规范》；`git status` 与 `pnpm worktree:ls` 查并行线，
+  有别的改动线在跑就 `pnpm worktree:new <分支名>` 开工作树，不在主工作区直接改。
+- **合入**：做完、`pnpm check` 全绿、评审过，在工作树 `git rebase main` 并重新验证，再单独执行
+  `pnpm worktree:merge <分支名>`；确认成功后 `pnpm worktree:rm <名称>` 回收。
 - **计划**：预计修改超过 3 个文件且触及正式代码时，先出计划等批准；实施中范围实质变化先回写计划。纯文档、
   纯测试、一次性脚本直接做，做完如实汇报。
 - **测试先行**：有明确输入输出的逻辑先写测试；bug 先用失败测试钉住。

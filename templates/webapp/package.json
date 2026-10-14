@@ -13,7 +13,15 @@
     "docs:check": "nexus-devflow docs-audit",
     "hooks": "nexus-devflow install-hooks",
     "check": "pnpm docs:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "deploy": "nexus-devflow deploy"
+    "deploy": "nexus-devflow deploy",
+    "worktree:new": "nexus-devflow worktree new",
+    "worktree:merge": "nexus-devflow worktree merge",
+    "worktree:rm": "nexus-devflow worktree rm",
+    "worktree:ls": "nexus-devflow worktree ls",
+    "worktree:isolate": "nexus-devflow worktree isolate",
+    "release": "nexus-devflow release",
+    "release:lock": "nexus-devflow release --lock",
+    "release:unlock": "nexus-devflow release --unlock"
   },
   "dependencies": {
     "@nexus-kit/pwa": "workspace:*",

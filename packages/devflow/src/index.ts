@@ -3,3 +3,7 @@ export * from "./deploy.ts";
 export * from "./docs-audit.ts";
 export * from "./check-changelog.ts";
 export * from "./hooks.ts";
+export * from "./worktree-lib.ts";
+export * from "./worktree.ts";
+export * from "./worktree-procs.ts";
+export * from "./release.ts";
