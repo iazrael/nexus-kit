@@ -80,7 +80,10 @@ export interface LogStore {
   lastEntryAt(session: string): number | null;
   /** 注册导出头部的摘要节；返回注销函数 */
   registerSection(name: string, lines: () => string[]): () => void;
-  exportText(): string;
+  /** 注册日志之后的附录（性能数据等大块内容）；返回注销函数 */
+  registerAppendix(name: string, text: () => string): () => void;
+  /** appendix=false 时不带附录（复制到聊天用：附录体积大，截短也只针对日志） */
+  exportText(options?: { appendix?: boolean }): string;
   /** 立即落盘 */
   flush(): void;
   persistHealth(): PersistHealth;
@@ -172,6 +175,7 @@ export function createLogStore(options: LogStoreOptions): LogStore {
   const flushDelayMs = options.flushDelayMs ?? 1000;
   const ring = new LogRing(options.domains ?? DEFAULT_DOMAINS);
   const sections = new Map<string, () => string[]>();
+  const appendices = new Map<string, () => string>();
   const health: PersistHealth = { failures: 0, lastError: null, degraded: 0, restoreError: null };
   /** 每条序列化长度的缓存（落盘裁剪按条计预算，每次落盘不再把全部条目重算一遍） */
   const sizes = new WeakMap<LogEntry, number>();
@@ -292,7 +296,7 @@ export function createLogStore(options: LogStoreOptions): LogStore {
     scheduleFlush();
   }
 
-  function exportText(): string {
+  function exportText(options: { appendix?: boolean } = {}): string {
     const lines = ["# 诊断日志", `导出时间：${formatTime(clock())}`, `本次会话：${session}`, ...env(), `日志级别：${threshold}`];
     const persist = [
       health.degraded > 0 ? `降级保存 ${health.degraded} 次（只留本会话）` : "",
@@ -320,6 +324,17 @@ export function createLogStore(options: LogStoreOptions): LogStore {
       }
       lines.push(formatEntry(e));
     }
+    if (options.appendix !== false) {
+      for (const [name, provider] of appendices) {
+        let body: string;
+        try {
+          body = provider();
+        } catch (error) {
+          body = `（生成失败：${errText(error)}）`;
+        }
+        lines.push("", `## ${name}`, body.replace(/\n$/, ""));
+      }
+    }
     return scrubUrlsInText(`${lines.join("\n")}\n`);
   }
 
@@ -341,6 +356,12 @@ export function createLogStore(options: LogStoreOptions): LogStore {
       let last: number | null = null;
       for (const e of entries()) if (e.s === s && (last === null || e.t > last)) last = e.t;
       return last;
+    },
+    registerAppendix(name, text) {
+      appendices.set(name, text);
+      return () => {
+        if (appendices.get(name) === text) appendices.delete(name);
+      };
     },
     registerSection(name, lines) {
       sections.set(name, lines);

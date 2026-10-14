@@ -149,6 +149,22 @@ describe("createLogStore", () => {
     expect(store.exportText()).not.toContain("## 上次退出");
   });
 
+  it("附录挂在日志之后（性能数据等大块内容）；可选不带附录导出；附录抛错不影响导出；注销后不再出现", () => {
+    const { store } = make();
+    store.log("app").info("一条日志");
+    const off = store.registerAppendix("性能数据", () => '{"kind":"vital"}\n{"kind":"boot"}');
+    store.registerAppendix("坏附录", () => {
+      throw new Error("boom");
+    });
+    const text = store.exportText();
+    expect(text.indexOf("## 日志")).toBeLessThan(text.indexOf("## 性能数据"));
+    expect(text).toMatch(/## 性能数据\n\{"kind":"vital"\}\n\{"kind":"boot"\}/);
+    expect(text).toMatch(/## 坏附录\n（生成失败：.*boom）/);
+    expect(store.exportText({ appendix: false })).not.toContain("## 性能数据");
+    off();
+    expect(store.exportText()).not.toContain("## 性能数据");
+  });
+
   it("摘要节抛错不影响导出；清空同步清掉持久化", () => {
     const { store, storage } = make();
     store.registerSection("坏节", () => {

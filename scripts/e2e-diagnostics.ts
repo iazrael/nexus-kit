@@ -6,8 +6,8 @@
  *   4. 会话三里抛一个没人处理的 Promise 拒绝（消息带 ?token=secret 的 URL）；
  *   5. 按版本号的固定坐标连点 5 次（手指不会追着元素走）打开诊断面板，点「下载诊断文件」（桌面上不弹分享）；断言提示出现后
  *      版本号没被挤动，断言：判词为疑似异常退出、三个会话都在、会话一那段有「页面告别」、
- *      未捕获异常进了日志且 URL 的查询串已去掉。
- *   6. 面板里点「复制诊断内容」，读剪贴板，断言是完整的诊断全文；
+ *      未捕获异常进了日志且 URL 的查询串已去掉；性能段（启动画像、走势）与 JSONL 附录都在，前几局的水位读得回来。
+ *   6. 面板里点「复制诊断内容」，读剪贴板，断言是完整的诊断全文、不带 JSONL 附录；
  *   7. 新开页面让入口代码找不到 #root（启动即抛错），断言出现整页兜底，从兜底页导出的文件记着启动失败。
  *   8. 新的浏览器上下文（屏蔽 SW，否则主包由缓存供给拦不住）里拦掉主包请求，断言 index.html 的内联兜底
  *      立即出现「加载失败」与「重新加载」；样式表失败 + 主包晚到不误报；页面级报错 + 主包晚到时加载失败页
@@ -107,12 +107,30 @@ async function main(): Promise<void> {
     expect(text.includes("[error] 未处理的 Promise 拒绝：拉取 https://api.test/v1/me 失败"), "未捕获异常进了日志，URL 保留来源与路径");
     expect(!text.includes("secret"), "诊断文件里没有 URL 查询串里的凭证");
     expect(text.includes("WARN  [lifecycle] 上一局疑似异常退出"), "会话三启动时记下了疑似异常");
+    // 性能采集：启动画像、走势段、附录 JSONL（本局长线 + 前几局最后的水位 + 挂载时间点）
+    expect(/## 启动画像\n\S+ · v[^\n]*· (mounted|loaded) · /.test(text), "诊断文件有挂载或 load 后采的启动画像");
+    expect(text.includes("## 性能走势\n"), "诊断文件有性能走势段");
+    const jsonl = text.split("## 性能数据（JSONL）\n")[1] ?? "";
+    const kinds = new Set(
+      jsonl
+        .split("\n")
+        .filter((l) => l.startsWith("{"))
+        .map((l) => (JSON.parse(l) as { kind: string }).kind),
+    );
+    expect(
+      ["meta", "trend", "vital", "savedVital", "boot", "milestone"].every((k) => kinds.has(k)),
+      `附录 JSONL 有各类行（实际 ${[...kinds].join(",")}）`,
+    );
+    expect(/"kind":"milestone","name":"mounted"/.test(jsonl), "附录记着挂载时间点");
+    const killedSid = /^(\S+?)[，（ ]/.exec(blocks[1] ?? "")?.[1] ?? "?";
+    expect(jsonl.includes(`"kind":"savedVital","session":"${killedSid}"`), `附录有被杀那一局（${killedSid}）最后的水位`);
     await panel.getByRole("status").filter({ hasText: "已开始下载" }).waitFor({ timeout: 5_000 });
 
     await panel.getByRole("button", { name: "复制诊断内容" }).click();
     await panel.getByRole("status").filter({ hasText: "已复制" }).waitFor({ timeout: 5_000 });
     const copied = await page3.evaluate(() => navigator.clipboard.readText());
     expect(copied.startsWith("# 诊断日志") && copied.includes("## 上次退出") && copied.includes("## 日志"), "复制到剪贴板的是完整诊断全文");
+    expect(copied.includes("## 性能走势") && !copied.includes("性能数据（JSONL）"), "复制的内容有性能走势、不带 JSONL 附录");
     await panel.getByRole("button", { name: "关闭" }).click();
 
     // 白屏兜底：让入口代码拿不到 #root，启动即抛错

@@ -16,6 +16,7 @@ import {
 } from "@nexus-kit/runtime/lifecycle";
 import { markBooted } from "@nexus-kit/runtime/boot";
 import { createLogStore, defaultEnvLines, truncateExport } from "@nexus-kit/runtime/log";
+import { createPerf } from "@nexus-kit/runtime/perf";
 import { APP_ID } from "../pwa.config.ts";
 import { APP_BUILD, APP_VERSION } from "./build-info.ts";
 
@@ -28,6 +29,15 @@ export const logs = createLogStore({
 });
 
 export const forensics = startForensics({ prefix: APP_ID, store: logs });
+
+// 性能采集：5 秒一个水位点（帧率、卡顿、JS 堆、DOM 节点……），本局最后一段跨会话保留；启动画像在挂载与 load 后各采一次。
+// 宿主自己的指标用 perf.registerGauge 登记，阶段耗时用 perf.span / spanAsync，自己有渲染循环的每帧调 frameStart/frameEnd
+export const perf = createPerf({ prefix: APP_ID, store: logs, version: APP_VERSION, build: APP_BUILD });
+perf.start();
+// load 已经过去（例如宿主把本文件改成动态导入）时直接采，否则监听永远等不到
+const captureLoaded = (): void => void setTimeout(() => perf.captureBoot("loaded"), 0);
+if (document.readyState === "complete") captureLoaded();
+else window.addEventListener("load", captureLoaded, { once: true });
 
 // 未捕获异常与没人处理的 Promise 拒绝进日志（同一条一分钟只记一次，每分钟有总数上限）
 captureGlobalErrors(logs);
@@ -62,8 +72,9 @@ const COPY_MAX_CHARS = 10_000;
 
 const panelBase = {
   getText: () => logs.exportText(),
+  // 复制到聊天不带性能附录：体积大，截短也只针对日志
   getCopyText: () =>
-    truncateExport(logs.exportText(), COPY_MAX_CHARS, {
+    truncateExport(logs.exportText({ appendix: false }), COPY_MAX_CHARS, {
       note: (n) => `已截取：省略了较早的 ${n} 行日志，完整内容请用「${PANEL_TEXTS.send}」（微信里先在浏览器打开）`,
     }),
   fileName: () => diagnosticFileName(APP_ID, Date.now()),
@@ -95,3 +106,10 @@ export const crashFallback = installCrashFallback({
     return () => panel.close();
   },
 });
+
+/** 应用挂载成功（根错误边界挂载时调）：撤下可能已显示的白屏兜底、记时间点、采一次启动画像 */
+export function onAppMounted(): void {
+  crashFallback.markMounted();
+  perf.milestone("mounted");
+  perf.captureBoot("mounted");
+}

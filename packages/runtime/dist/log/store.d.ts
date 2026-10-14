@@ -75,7 +75,12 @@ export interface LogStore {
     lastEntryAt(session: string): number | null;
     /** 注册导出头部的摘要节；返回注销函数 */
     registerSection(name: string, lines: () => string[]): () => void;
-    exportText(): string;
+    /** 注册日志之后的附录（性能数据等大块内容）；返回注销函数 */
+    registerAppendix(name: string, text: () => string): () => void;
+    /** appendix=false 时不带附录（复制到聊天用：附录体积大，截短也只针对日志） */
+    exportText(options?: {
+        appendix?: boolean;
+    }): string;
     /** 立即落盘 */
     flush(): void;
     persistHealth(): PersistHealth;

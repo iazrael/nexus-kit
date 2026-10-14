@@ -1,7 +1,7 @@
 {
   "name": "@nexus-kit/runtime",
   "version": "0.4.0",
-  "description": "运行时基础设施：日志（分区环形缓冲、跨会话持久化、行式导出）、生命周期取证与诊断导出、白屏与主包加载失败兜底",
+  "description": "运行时基础设施：日志（分区环形缓冲、跨会话持久化、行式导出）、性能采集（水位长线、启动画像、帧统计）、生命周期取证与诊断导出、白屏与主包加载失败兜底",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -16,6 +16,10 @@
     "./boot": {
       "types": "./dist/boot/index.d.ts",
       "default": "./dist/boot/index.js"
+    },
+    "./perf": {
+      "types": "./dist/perf/index.d.ts",
+      "default": "./dist/perf/index.js"
     }
   },
   "files": [

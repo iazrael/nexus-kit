@@ -101,6 +101,7 @@ export function createLogStore(options) {
     const flushDelayMs = options.flushDelayMs ?? 1000;
     const ring = new LogRing(options.domains ?? DEFAULT_DOMAINS);
     const sections = new Map();
+    const appendices = new Map();
     const health = { failures: 0, lastError: null, degraded: 0, restoreError: null };
     /** 每条序列化长度的缓存（落盘裁剪按条计预算，每次落盘不再把全部条目重算一遍） */
     const sizes = new WeakMap();
@@ -234,7 +235,7 @@ export function createLogStore(options) {
         }
         scheduleFlush();
     }
-    function exportText() {
+    function exportText(options = {}) {
         const lines = ["# 诊断日志", `导出时间：${formatTime(clock())}`, `本次会话：${session}`, ...env(), `日志级别：${threshold}`];
         const persist = [
             health.degraded > 0 ? `降级保存 ${health.degraded} 次（只留本会话）` : "",
@@ -265,6 +266,18 @@ export function createLogStore(options) {
             }
             lines.push(formatEntry(e));
         }
+        if (options.appendix !== false) {
+            for (const [name, provider] of appendices) {
+                let body;
+                try {
+                    body = provider();
+                }
+                catch (error) {
+                    body = `（生成失败：${errText(error)}）`;
+                }
+                lines.push("", `## ${name}`, body.replace(/\n$/, ""));
+            }
+        }
         return scrubUrlsInText(`${lines.join("\n")}\n`);
     }
     return {
@@ -288,6 +301,13 @@ export function createLogStore(options) {
                 if (e.s === s && (last === null || e.t > last))
                     last = e.t;
             return last;
+        },
+        registerAppendix(name, text) {
+            appendices.set(name, text);
+            return () => {
+                if (appendices.get(name) === text)
+                    appendices.delete(name);
+            };
         },
         registerSection(name, lines) {
             sections.set(name, lines);
