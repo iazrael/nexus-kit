@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+
 - 新增：`@nexus-kit/runtime/assets` 图像资源。`createLoader`：加载调度器，任务按档位（0 挡门 / 1 可见 / 2 附近 / 3 空闲）与次序值排队，在飞的不打断，并发上限默认 6；同一 key（通常是 URL）在飞或排队时共用结果、不发第二次；每次调用可带 AbortSignal，全部取消且还在排队才出队；`hold` 关键闸门在关键资源有结论或封顶时限前压住档位 2、3。`createImageCache`：下载并解码成 ImageBitmap，引用计数持有，引用为零进 LRU，超预算淘汰时立即 `close()` 并通知宿主；失败不进缓存。`mapLimit`（限并发、按序返回）与 `whenIdle`（空闲执行，老 iOS 退定时器）。传入 `perf` 时登记 `assets.bitmapMB`、`assets.bitmaps`、`assets.queued`、`assets.running` 进水位长线。
 - 新增：`@nexus-kit/runtime/audio` 音频。`createAudioHost`：惰性创建 AudioContext，`unlock()` 在手势里调；回前台（`visibilitychange` 与 `statechange`）对任何非 running 状态（含 iOS 的 `interrupted`）resume，落地仍不行就换新 context（上限 3 次）并广播 `onRebuild`；master 与分轨总线，按来源登记的下潜取最深一档；`whenRunning` 发声前置门；可选 `suspendWhenHidden`；`resetSession()` 处理 iOS 停麦后输出变轻。`createSamplePlayer`：解码缓存按字节预算 LRU、在途去重、引擎重建全清；HTTP 错误与解码失败永不重试，已知缺失直接静默；音效同 key 限频（墙钟）、补播时限 300ms、同时发声上限按优先级与音量抢占、句柄淡出停止；预热经 `/assets` 调度器排队，真触发直接下载并撤回排队中的同 key 预热；音乐记意图、取号仲裁晚到的解码、单次曲播完撤意图、回到 running 与重建后校对重播；`audio.decodedMB` 进水位。音量偏好的解析、钳制与「全默认不写」序列化。
 - 新增：`/assets` 调度器的 `state(key)`：查任务在排队还是在飞。
