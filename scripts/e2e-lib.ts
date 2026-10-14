@@ -1,7 +1,7 @@
 /**
- * 真浏览器 e2e 的共用部分：把模板拷到 temp/<名>-app（软链复用 node_modules）、构建并发布到
- * temp/<名>-site、起本地静态服务（缓存头按 nginx 样板：更新链文件 no-cache、带哈希资源 immutable）。
- * 每个 e2e 用自己的目录名，互不覆盖。只动 temp/ 下的副本，不改模板本身。
+ * 真浏览器 e2e 的共用部分：把模板拷到 .e2e/<名>-app（软链复用 node_modules）、构建并发布到
+ * .e2e/<名>-site（专用目录，整个可再生：kit 的 worktree.disposable 登记了它，回收工作树不拦）、起本地静态服务（缓存头按 nginx 样板：更新链文件 no-cache、带哈希资源 immutable）。
+ * 每个 e2e 用自己的目录名，互不覆盖。只动 .e2e/ 下的副本，不改模板本身。
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
@@ -30,8 +30,8 @@ export function assertPackagesBuilt(): void {
 }
 
 export function e2eApp(name: string) {
-  const APP = join(KIT, `temp/${name}-app`);
-  const SITE = join(KIT, `temp/${name}-site`);
+  const APP = join(KIT, `.e2e/${name}-app`);
+  const SITE = join(KIT, `.e2e/${name}-site`);
   const tag = `[${name}]`;
   return {
     APP,

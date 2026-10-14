@@ -5,7 +5,8 @@ node_modules/
 templates/*/dist/
 *.tsbuildinfo
 
-# 缓存与临时
+# 缓存与临时（.e2e/ 是真浏览器 e2e 的模板副本与站点，可再生）
+.e2e/
 .cache/
 coverage/
 temp/

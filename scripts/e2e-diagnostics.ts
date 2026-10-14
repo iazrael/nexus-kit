@@ -1,14 +1,17 @@
 /**
  * 日志与异常退出取证的真浏览器 e2e：
- *   1. 模板构建发布到 temp/e2e-diag-site，Chromium 打开（会话一）；
+ *   1. 模板构建发布到 .e2e/e2e-diag-site，Chromium 打开（会话一）；
  *   2. 刷新（会话一正常告别 → 会话二），断言上一会话的日志读回来了；
  *   3. 等日志落盘后用 CDP Page.crash 杀掉渲染进程（不会有 pagehide），新开页面（会话三）；
  *   4. 会话三里抛一个没人处理的 Promise 拒绝（消息带 ?token=secret 的 URL）；
  *   5. 按版本号的固定坐标连点 5 次（手指不会追着元素走）打开诊断面板，点「下载诊断文件」（桌面上不弹分享）；断言提示出现后
  *      版本号没被挤动，断言：判词为疑似异常退出、三个会话都在、会话一那段有「页面告别」、
  *      未捕获异常进了日志且 URL 的查询串已去掉。
- *   6. 面板里点「复制全部内容」，读剪贴板，断言是完整的诊断全文；
+ *   6. 面板里点「复制诊断内容」，读剪贴板，断言是完整的诊断全文；
  *   7. 新开页面让入口代码找不到 #root（启动即抛错），断言出现整页兜底，从兜底页导出的文件记着启动失败。
+ *   8. 新的浏览器上下文（屏蔽 SW，否则主包由缓存供给拦不住）里拦掉主包请求，断言 index.html 的内联兜底
+ *      立即出现「加载失败」与「重新加载」；样式表失败 + 主包晚到不误报；页面级报错 + 主包晚到时加载失败页
+ *      会先出现、主包一启动即撤下。
  * 导出走下载兜底：测试前去掉 navigator.share，免得 headless 下弹系统分享面板卡住。
  */
 import { readFileSync } from "node:fs";
@@ -106,7 +109,7 @@ async function main(): Promise<void> {
     expect(text.includes("WARN  [lifecycle] 上一局疑似异常退出"), "会话三启动时记下了疑似异常");
     await panel.getByRole("status").filter({ hasText: "已开始下载" }).waitFor({ timeout: 5_000 });
 
-    await panel.getByRole("button", { name: "复制全部内容" }).click();
+    await panel.getByRole("button", { name: "复制诊断内容" }).click();
     await panel.getByRole("status").filter({ hasText: "已复制" }).waitFor({ timeout: 5_000 });
     const copied = await page3.evaluate(() => navigator.clipboard.readText());
     expect(copied.startsWith("# 诊断日志") && copied.includes("## 上次退出") && copied.includes("## 日志"), "复制到剪贴板的是完整诊断全文");
@@ -131,7 +134,50 @@ async function main(): Promise<void> {
     const crashText = readFileSync(await crashDownload.path(), "utf8");
     expect(crashText.includes("应用没能启动") && crashText.includes("index.html 缺 #root"), "兜底页导出的诊断文件记着启动失败原因");
     expect(await fallback.getByRole("button", { name: "重新加载" }).isVisible(), "兜底页提供重新加载");
-    log("通过：日志跨会话保留 → 杀进程后判疑似异常 → 连点打开面板导出与复制 → 白屏兜底可导出");
+    // 主包加载失败：runtime 的兜底没装上，只能靠 index.html 的内联脚本
+    const bare = await browser.newContext({ serviceWorkers: "block" });
+    await bare.route(/\/assets\/index-[\w-]+\.js$/, (route) => route.abort());
+    const page5 = await bare.newPage();
+    const started = Date.now();
+    await page5.goto(URL);
+    const bootFail = page5.getByRole("alertdialog", { name: "加载失败" });
+    await bootFail.waitFor({ timeout: 5_000 });
+    expect(Date.now() - started < 5_000, `主包加载失败后 ${Date.now() - started}ms 内出现内联兜底`);
+    expect(await bootFail.getByRole("button", { name: "重新加载" }).isVisible(), "内联兜底提供重新加载");
+    expect((await page5.evaluate(() => document.documentElement.hasAttribute("data-boot"))) === false, "主包确实没执行（没有启动标记）");
+    await bare.close();
+
+    // 误报防线一：样式表加载失败、主包晚到——不算主包失败，不出加载失败页
+    const slowCss = await browser.newContext({ serviceWorkers: "block" });
+    await slowCss.route(/\.css$/, (route) => route.abort());
+    await slowCss.route(/\/assets\/index-[\w-]+\.js$/, async (route) => {
+      await new Promise((r) => setTimeout(r, 4_000));
+      await route.continue();
+    });
+    const page6 = await slowCss.newPage();
+    await page6.goto(URL);
+    await page6.getByTestId("app-version").waitFor({ timeout: 15_000 });
+    expect((await page6.getByRole("alertdialog", { name: "加载失败" }).count()) === 0, "样式表失败 + 主包晚到：没有误报加载失败页");
+    await slowCss.close();
+
+    // 误报防线二：启动时有页面级报错、主包晚到——加载失败页 2 秒后出现，主包一启动就撤下
+    const slowMain = await browser.newContext({ serviceWorkers: "block" });
+    await slowMain.addInitScript(() => {
+      setTimeout(() => window.dispatchEvent(new ErrorEvent("error", { message: "注入脚本报错" })), 500); // 页面解析之后（兜底脚本已装好）才报错，与真实注入脚本一致
+    });
+    await slowMain.route(/\/assets\/index-[\w-]+\.js$/, async (route) => {
+      await new Promise((r) => setTimeout(r, 4_000));
+      await route.continue();
+    });
+    const page7 = await slowMain.newPage();
+    // 不等 load：load 要等被推迟的主包，等到时兜底页早已出现又撤下
+    await page7.goto(URL, { waitUntil: "commit" });
+    await page7.getByRole("alertdialog", { name: "加载失败" }).waitFor({ timeout: 4_000 });
+    await page7.getByTestId("app-version").waitFor({ timeout: 15_000 });
+    expect((await page7.getByRole("alertdialog", { name: "加载失败" }).count()) === 0, "主包晚到启动后，已弹出的加载失败页撤下");
+    await slowMain.close();
+
+    log("通过：日志跨会话保留 → 杀进程后判疑似异常 → 连点打开面板导出与复制 → 白屏兜底可导出 → 主包加载失败有内联兜底");
   } finally {
     await browser.close();
     server.close();

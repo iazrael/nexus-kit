@@ -416,7 +416,7 @@ function resolveBranchArg(layout: Layout, arg: string): string {
   const list = worktrees(layout);
   const root = resolveWorktreeArg(layout, list, arg);
   const branch = root === null ? null : branchOfWorktreeArg(root, layout.worktreesDir, list);
-  if (branch === null) throw new Error(`[worktree] 分支不存在：${arg}（nexus-devflow worktree ls 查看全部工作树与分支）`);
+  if (branch === null) throw new Error(`[worktree] 分支不存在：${arg}（pnpm worktree:ls 查看全部工作树与分支）`);
   return branch;
 }
 
@@ -482,7 +482,7 @@ export function worktreeMerge(env: WorktreeEnv, arg: string): "ff" | "up-to-date
         );
       }
     }
-    env.log(`[worktree] 合入完成。回收：nexus-devflow worktree rm ${basename(branch)}；分支不再需要可 git branch -d ${branch}`);
+    env.log(`[worktree] 合入完成。回收：pnpm worktree:rm ${basename(branch)}；分支不再需要可 git branch -d ${branch}`);
     return mode;
   });
 }
@@ -580,7 +580,7 @@ export function worktreeRemove(env: WorktreeEnv, arg: string, opts: { force: boo
 
 function removeWorktree(env: WorktreeEnv, layout: Layout, root: string, opts: { force: boolean; deleteMergedHookBranch: boolean }): void {
   const wt = worktrees(layout).find((w) => w.path === root);
-  if (wt === undefined) throw new Error(`[worktree] 不是本仓库的工作树：${root}（nexus-devflow worktree ls 查看全部）`);
+  if (wt === undefined) throw new Error(`[worktree] 不是本仓库的工作树：${root}（pnpm worktree:ls 查看全部）`);
   if (wt.main) throw new Error("[worktree] 不能回收主仓库");
   if (wt.locked) {
     throw new Error(`[worktree] ${root} 已锁定，通常是有 Claude 会话正在用。确认没人在用后 git worktree unlock ${root} 再回收`);

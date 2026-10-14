@@ -14,9 +14,13 @@ import {
   startForensics,
   type PanelTexts,
 } from "@nexus-kit/runtime/lifecycle";
-import { createLogStore, defaultEnvLines } from "@nexus-kit/runtime/log";
+import { markBooted } from "@nexus-kit/runtime/boot";
+import { createLogStore, defaultEnvLines, truncateExport } from "@nexus-kit/runtime/log";
 import { APP_ID } from "../pwa.config.ts";
 import { APP_BUILD, APP_VERSION } from "./build-info.ts";
+
+// 主包已开始执行：注入 index.html 的「主包加载失败」兜底就此退出（已经弹出的撤下），之后由下面的 runtime 兜底接管
+markBooted();
 
 export const logs = createLogStore({
   key: `${APP_ID}.log`,
@@ -38,21 +42,30 @@ const PANEL_TEXTS: PanelTexts = {
   title: "导出诊断信息",
   hint: "把诊断信息发给开发者，帮助排查问题。内容是应用的运行记录，以及浏览器、屏幕尺寸等设备信息。",
   send: prefersShare() ? "发送诊断文件" : "下载诊断文件",
-  copy: "复制全部内容",
+  copy: "复制诊断内容",
   close: "关闭",
   reload: "重新加载",
+  checking: "正在检查新版本…",
+  updating: "正在下载新版本…",
   results: {
     shared: "已分享",
-    downloaded: `已开始下载（文件名以「${APP_ID}-诊断」开头，在「下载」里找）。没找到的话，点「复制全部内容」粘贴给开发者。`,
+    downloaded: `已开始下载（文件名以「${APP_ID}-诊断」开头，在「下载」里找）。没找到的话，点「复制诊断内容」粘贴给开发者。`,
     cancelled: "",
-    copied: "已复制，粘贴到聊天里发给开发者即可。",
+    copied: "已复制，粘贴到聊天里发给开发者即可（内容太长时只取了最近的日志）。",
     copyFailed: `复制没成功。${IN_APP_ESCAPE}`,
     failed: `导出没成功。${IN_APP_ESCAPE}`,
   },
 };
 
+/** 复制的上限：聊天应用贴不进太长的内容。取值没有对各聊天应用实测，不够再调 */
+const COPY_MAX_CHARS = 10_000;
+
 const panelBase = {
   getText: () => logs.exportText(),
+  getCopyText: () =>
+    truncateExport(logs.exportText(), COPY_MAX_CHARS, {
+      note: (n) => `已截取：省略了较早的 ${n} 行日志，完整内容请用「${PANEL_TEXTS.send}」（微信里先在浏览器打开）`,
+    }),
   fileName: () => diagnosticFileName(APP_ID, Date.now()),
 };
 
@@ -76,7 +89,7 @@ export const crashFallback = installCrashFallback({
       texts: {
         ...PANEL_TEXTS,
         title: "应用出错了",
-        hint: "应用没能正常显示。可以先把诊断信息发给开发者，再点「重新加载」；还不行的话，从多任务界面彻底关掉应用再打开。",
+        hint: "应用没能正常显示。可以先把诊断信息发给开发者，再点「重新加载」（会先换上已下载好的新版本；刚更新过的话可以再点一次）。还不行就关掉页面重新打开（主屏应用从多任务界面划掉；微信里点右上角「···」选「在浏览器打开」）。",
       },
     });
     return () => panel.close();

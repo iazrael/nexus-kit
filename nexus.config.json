@@ -13,6 +13,7 @@
   "worktree": {
     "share": [],
     "postCreate": [["pnpm", "install", "--frozen-lockfile"]],
-    "postMerge": [["pnpm", "check"]]
+    "postMerge": [["pnpm", "check"]],
+    "disposable": [".e2e", "templates/webapp/dist", "templates/webapp/.build-number"]
   }
 }

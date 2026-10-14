@@ -6,9 +6,11 @@ const TEXTS: PanelTexts = {
   title: "导出诊断信息",
   hint: "发给开发者",
   send: "发送诊断文件",
-  copy: "复制全部内容",
+  copy: "复制诊断内容",
   close: "关闭",
   reload: "重新加载",
+  checking: "正在检查新版本…",
+  updating: "正在下载新版本…",
   results: { shared: "已分享", downloaded: "已开始下载", cancelled: "", copied: "已复制", copyFailed: "复制失败", failed: "导出失败" },
 };
 
@@ -34,7 +36,7 @@ describe("openDiagnosticsPanel", () => {
     expect(dialog.textContent).toContain("导出诊断信息");
     expect(dialog.textContent).toContain("发给开发者");
     expect(button("发送诊断文件")).toBeTruthy();
-    expect(button("复制全部内容")).toBeTruthy();
+    expect(button("复制诊断内容")).toBeTruthy();
     expect(button("关闭")).toBeTruthy();
     expect(button("重新加载")).toBeUndefined();
   });
@@ -53,15 +55,35 @@ describe("openDiagnosticsPanel", () => {
     expect(status()).toBe("导出失败");
   });
 
+  it("复制可单独指定内容（截短版）；发送仍是全文", async () => {
+    const copy = vi.fn(async () => true);
+    const deliver = vi.fn(async () => "downloaded" as const);
+    openDiagnosticsPanel({
+      mode: "sheet",
+      texts: TEXTS,
+      getText: () => "全文",
+      getCopyText: () => "截短",
+      fileName: () => "a.txt",
+      copy,
+      deliver,
+    });
+    button("复制诊断内容").click();
+    await flush();
+    button("发送诊断文件").click();
+    await flush();
+    expect(copy).toHaveBeenCalledWith("截短");
+    expect(deliver).toHaveBeenCalledWith("a.txt", "全文");
+  });
+
   it("复制：成功与失败各有提示；取全文本身抛错也不打断", async () => {
     const copy = vi.fn(async () => true);
     openDiagnosticsPanel({ mode: "sheet", texts: TEXTS, getText: () => "全文", fileName: () => "a.txt", copy });
-    button("复制全部内容").click();
+    button("复制诊断内容").click();
     await flush();
     expect(copy).toHaveBeenCalledWith("全文");
     expect(status()).toBe("已复制");
     copy.mockResolvedValueOnce(false);
-    button("复制全部内容").click();
+    button("复制诊断内容").click();
     await flush();
     expect(status()).toBe("复制失败");
   });
@@ -136,12 +158,18 @@ describe("openDiagnosticsPanel", () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it("整页（白屏兜底）：不可关，提供重新加载；不依赖应用样式（内联样式铺满）", () => {
+  it("整页（白屏兜底）：不可关，提供重新加载；不依赖应用样式（内联样式铺满）", async () => {
     const reload = vi.fn();
     openDiagnosticsPanel({ mode: "page", texts: { ...TEXTS, title: "应用出错了" }, getText: () => "x", fileName: () => "a.txt", reload });
     expect(button("关闭")).toBeUndefined();
     button("重新加载").click();
+    await flush();
     expect(reload).toHaveBeenCalled();
+    reload.mock.calls[0]![0](); // 宿主报「新版本下载中」
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent === "正在下载新版本…")).toBe(true);
+    const reloadBtn = [...document.querySelectorAll("button")].find((b) => b.textContent === "正在下载新版本…")!;
+    expect(reloadBtn.disabled).toBe(true); // 等待激活新版本期间不能重复点
+    expect(reloadBtn.style.opacity).toBe("0.6"); // 看得出在处理
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     const root = document.querySelector('[role="dialog"]')!.parentElement as HTMLElement;
     expect(root.style.position).toBe("fixed");
