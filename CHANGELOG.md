@@ -12,6 +12,7 @@
 - 新增：`/boot`（`reloadLatest`、`bootGuardScript`、`markBooted`）与 `/lifecycle` 的 `reloadToLatestVersion`：兜底页「重新加载」先激活已下载好的新版本再刷新（升级确认原则的唯一例外），没有新版本时检查完立即刷新；主包加载失败的内联兜底与它同一份源码、只用 ES5。整页诊断面板的「重新加载」默认走这条路。`/log` 的 `truncateExport`：复制到聊天时截短（头部完整、日志取最近的行、补会话分隔、省略说明由宿主给）。
 - 新增：模板经 vite 注入主包加载失败兜底——主包没加载上时显示「加载失败 + 重新加载」，不再一片白；主包晚到时自动撤下。
 - 新增：模板接入日志、取证、异常捕获与白屏兜底（根错误边界），pwa 控制器的日志写进同一份记录；版本号 2 秒内连点 5 次打开诊断面板，第 3 下起提示还差几下。
+- 变更：`worktree.postMerge` 默认改为先 `pnpm install --frozen-lockfile` 再 `pnpm build`——工作树里加了依赖时，合入后主仓库的验证不再因找不到新依赖而失败；没写 `postMerge` 的宿主升级后自动生效，不用改；自定义了 `postMerge` 的宿主请把 `["pnpm", "install", "--frozen-lockfile"]` 加为数组的第一项。
 - 内部：工作树提示统一为 `pnpm worktree:*`；e2e 产物改放 `.e2e/` 并登记为可再生，回收工作树不再被拦。
 - 内部：`pnpm e2e` 增加日志与诊断一条（刷新保留、CDP 杀进程后判疑似异常、导出内容）；init-app 改为从 `packages/` 读取 kit 包清单。
 

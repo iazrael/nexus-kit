@@ -404,7 +404,11 @@ export function worktreeMerge(env, arg) {
             }
             catch (error) {
                 throw new Error(`[worktree] ✖ ${branch} 已合入 ${base}，但主仓库 ${line} 失败（输出见上方）——${base} 当前没通过合入后验证，` +
-                    "必须继续排查修复（修复同样走工作树合回），不得当成功收工", { cause: error });
+                    "必须继续排查修复（修复同样走工作树合回），不得当成功收工" +
+                    // 按锁文件安装失败，多半是依赖改动没提交全，不是构建坏了：直接点明检查方向
+                    (/\binstall\b/.test(line) && line.includes("--frozen-lockfile")
+                        ? "。按锁文件安装失败通常是 package.json 与锁文件没一起提交：回工作树检查两者是否同步"
+                        : ""), { cause: error });
             }
         }
         env.log(`[worktree] 合入完成。回收：pnpm worktree:rm ${basename(branch)}；分支不再需要可 git branch -d ${branch}`);

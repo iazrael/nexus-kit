@@ -57,7 +57,11 @@ describe("parseNexusConfig", () => {
       share: ["apps/web/.build-number"],
       disposable: [],
       postCreate: [["pnpm", "install", "--frozen-lockfile"]],
-      postMerge: [["pnpm", "build"]],
+      // 合入可能改了锁文件（工作树里加了依赖）：先按锁文件装依赖再构建，否则主仓库验证会找不到新依赖
+      postMerge: [
+        ["pnpm", "install", "--frozen-lockfile"],
+        ["pnpm", "build"],
+      ],
     });
     expect(parseNexusConfig({}, "/repo").worktree).toMatchObject({ base: "main", share: [".build-number"] });
   });

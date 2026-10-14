@@ -477,7 +477,11 @@ export function worktreeMerge(env: WorktreeEnv, arg: string): "ff" | "up-to-date
       } catch (error) {
         throw new Error(
           `[worktree] ✖ ${branch} 已合入 ${base}，但主仓库 ${line} 失败（输出见上方）——${base} 当前没通过合入后验证，` +
-            "必须继续排查修复（修复同样走工作树合回），不得当成功收工",
+            "必须继续排查修复（修复同样走工作树合回），不得当成功收工" +
+            // 按锁文件安装失败，多半是依赖改动没提交全，不是构建坏了：直接点明检查方向
+            (/\binstall\b/.test(line) && line.includes("--frozen-lockfile")
+              ? "。按锁文件安装失败通常是 package.json 与锁文件没一起提交：回工作树检查两者是否同步"
+              : ""),
           { cause: error },
         );
       }

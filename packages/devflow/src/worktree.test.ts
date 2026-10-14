@@ -269,6 +269,14 @@ describe("worktree merge", () => {
     expect(git(h.main, "status", "--porcelain")).toBe("");
   });
 
+  it("合入后安装依赖失败：报错点明多半是 package.json 与锁文件没一起提交，后面的验证不再跑", () => {
+    const h = harness({ postMerge: [["pnpm", "install", "--frozen-lockfile"], ["verify"]] }, (line) => line.startsWith("pnpm install"));
+    const { root } = worktreeNew(h.env(), { branch: "side" });
+    commitIn(root, "b1");
+    expect(() => worktreeMerge(h.env(), "side")).toThrow(/package\.json 与锁文件/);
+    expect(h.runs.map((r) => r.line)).not.toContain("verify");
+  });
+
   it("postMerge 失败：合入保留，非零报错写明已合入未通过验证", () => {
     const h = harness({}, (line) => line === "verify");
     const { root } = worktreeNew(h.env(), { branch: "side" });

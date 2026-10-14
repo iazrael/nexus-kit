@@ -142,7 +142,11 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
         share: relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]),
         disposable: relPathList(wt, "disposable", "worktree", []),
         postCreate: commandList(wt, "postCreate", "worktree", [["pnpm", "install", "--frozen-lockfile"]], true),
-        postMerge: commandList(wt, "postMerge", "worktree", [["pnpm", "build"]], true),
+        // 合入可能改了锁文件（工作树里加了依赖）：先按锁文件装依赖，否则主仓库的验证找不到新依赖
+        postMerge: commandList(wt, "postMerge", "worktree", [
+            ["pnpm", "install", "--frozen-lockfile"],
+            ["pnpm", "build"],
+        ], true),
     };
     const rel = section(raw, "release");
     const release = {
