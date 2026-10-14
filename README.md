@@ -13,7 +13,7 @@
 ```bash
 pnpm install
 pnpm check                      # 完成标准
-pnpm e2e                        # 真浏览器升级链
+pnpm e2e                        # 真浏览器：升级链、日志诊断、图像资源、音频
 pnpm init-app ../my-app --title 我的应用   # 从模板生成新项目
 ```
 
