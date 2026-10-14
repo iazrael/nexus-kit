@@ -46,6 +46,7 @@
   `pnpm run deploy`（生产部署，不能写 `pnpm deploy`）。
 - 并行开发：`pnpm worktree:new|merge|rm|ls`（见交付规范 §6）；不手工 `git worktree add/remove`，不用 `git stash`。
 - 实机验收 URL 一律带 `?nosw=1`。
+- 日志只经 `src/observe.ts` 的 `logs.log("模块名")`；排查用户问题让对方连点版本号 5 次导出诊断文件，`?log=debug` 打开详细日志。
 
 ## 3. 工作流
 

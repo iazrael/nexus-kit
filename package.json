@@ -16,7 +16,7 @@
     "docs:check": "node packages/devflow/src/cli.ts docs-audit",
     "dist:check": "node scripts/check-dist-fresh.ts",
     "check": "pnpm docs:check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm dist:check && pnpm -F nexus-webapp-template test && pnpm -F nexus-webapp-template build",
-    "e2e": "node scripts/e2e-upgrade.ts",
+    "e2e": "node scripts/e2e-upgrade.ts && node scripts/e2e-diagnostics.ts",
     "init-app": "node scripts/init-app.ts"
   },
   "devDependencies": {

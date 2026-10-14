@@ -4,10 +4,13 @@
  */
 import { createPwaController } from "@nexus-kit/pwa";
 import { registerSW } from "virtual:pwa-register";
+import { APP_ID } from "../pwa.config.ts";
 import { APP_BUILD, APP_NOTES_DIGEST, APP_VERSION } from "./build-info.ts";
+import { logs } from "./observe.ts";
 
 export const pwa = createPwaController({
   local: { version: APP_VERSION, build: APP_BUILD, notesDigest: APP_NOTES_DIGEST },
   registerSW,
-  storagePrefix: "nexus-app",
+  storagePrefix: APP_ID,
+  logger: logs.log("pwa"),
 });

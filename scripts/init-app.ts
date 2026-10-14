@@ -10,7 +10,7 @@ import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "no
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { installHooks } from "../packages/devflow/src/hooks.ts";
-import { rewriteKitDeps, KIT_REPO } from "./init-app-lib.ts";
+import { kitPackageNames, rewriteKitDeps, KIT_REPO } from "./init-app-lib.ts";
 
 const KIT = resolve(import.meta.dirname, "..");
 const TEMPLATE = join(KIT, "templates/webapp");
@@ -46,7 +46,7 @@ const kitVersion = (JSON.parse(readFileSync(join(KIT, "packages/pwa/package.json
 const pkgPath = join(dest, "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
 pkg.name = name;
-writeFileSync(pkgPath, `${JSON.stringify(rewriteKitDeps(pkg, kitVersion), null, 2)}\n`);
+writeFileSync(pkgPath, `${JSON.stringify(rewriteKitDeps(pkg, kitVersion, kitPackageNames(join(KIT, "packages"))), null, 2)}\n`);
 
 // pnpm 10 默认拦截依赖的 install 脚本：放行 esbuild，免得每次安装都弹警告（模板在 kit workspace 里由 kit 根配置放行）
 writeFileSync(join(dest, "pnpm-workspace.yaml"), "onlyBuiltDependencies:\n  - esbuild\n");
@@ -63,7 +63,6 @@ replaceIn("pwa.config.ts", [
 ]);
 replaceIn("index.html", [["Nexus App", title]]);
 replaceIn("src/app.tsx", [["Nexus App", title]]);
-replaceIn("src/pwa.ts", [['storagePrefix: "nexus-app"', `storagePrefix: "${appId}"`]]);
 replaceIn("CLAUDE.md", [["Nexus App", title]]);
 
 // .githooks/ 必须入库：core.hooksPath 是相对路径，git 在每个工作树里按该树的根目录找钩子，

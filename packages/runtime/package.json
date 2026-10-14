@@ -1,0 +1,27 @@
+{
+  "name": "@nexus-kit/runtime",
+  "version": "0.4.0",
+  "description": "运行时基础设施：日志（分区环形缓冲、跨会话持久化、行式导出）、生命周期取证与诊断导出",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./log": {
+      "types": "./dist/log/index.d.ts",
+      "default": "./dist/log/index.js"
+    },
+    "./lifecycle": {
+      "types": "./dist/lifecycle/index.d.ts",
+      "default": "./dist/lifecycle/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "happy-dom": "^18.0.1"
+  }
+}

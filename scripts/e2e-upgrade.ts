@@ -7,46 +7,14 @@
  *   4. 点「检查更新」→ 断言弹窗出现、条目可见 → 点「立即更新」→ 断言页面刷新进新版本。
  * 只动 temp/ 下的副本，不改模板本身。用法：pnpm e2e（先 pnpm build 产出各包 dist）。
  */
-import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
-import { extname, join, resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { chromium } from "playwright";
+import { assertPackagesBuilt, e2eApp, serve } from "./e2e-lib.ts";
 
-const KIT = resolve(import.meta.dirname, "..");
-const TEMPLATE = join(KIT, "templates/webapp");
-const APP = join(KIT, "temp/e2e-app");
-const SITE = join(KIT, "temp/e2e-site");
 const PORT = Number(process.env.E2E_PORT ?? 4317);
 const NOTE = "新增：端到端升级验证条目";
-
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".webmanifest": "application/manifest+json",
-  ".png": "image/png",
-};
-const NO_CACHE = new Set(["/", "/index.html", "/sw.js", "/version.json", "/manifest.webmanifest"]);
-
-function log(m: string): void {
-  console.log(`[e2e] ${m}`);
-}
-
-function prepareApp(): void {
-  rmSync(APP, { recursive: true, force: true });
-  mkdirSync(APP, { recursive: true });
-  cpSync(TEMPLATE, APP, { recursive: true, filter: (src) => !/[/\\](node_modules|dist)$/.test(src) && !src.endsWith(".build-number") });
-  symlinkSync(join(TEMPLATE, "node_modules"), join(APP, "node_modules"));
-}
-
-function build(): void {
-  execFileSync("pnpm", ["exec", "vite", "build"], { cwd: APP, stdio: ["ignore", "ignore", "inherit"] });
-  execFileSync("node", ["scripts/verify-build.ts"], { cwd: APP, stdio: "inherit" });
-  rmSync(SITE, { recursive: true, force: true });
-  cpSync(join(APP, "dist"), SITE, { recursive: true });
-}
+const { APP, SITE, prepareApp, build, log } = e2eApp("e2e");
 
 function bumpVersion(): string {
   const pkgPath = join(APP, "package.json");
@@ -61,28 +29,11 @@ function bumpVersion(): string {
   return next;
 }
 
-function serve(): Promise<Server> {
-  const server = createServer((req, res) => {
-    const path = decodeURIComponent((req.url ?? "/").split("?")[0]!);
-    let file = join(SITE, path === "/" ? "index.html" : path);
-    if (!file.startsWith(SITE) || !existsSync(file) || statSync(file).isDirectory()) file = join(SITE, "index.html");
-    res.setHeader("Content-Type", MIME[extname(file)] ?? "application/octet-stream");
-    res.setHeader(
-      "Cache-Control",
-      NO_CACHE.has(path) ? "private, no-cache" : path.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
-    );
-    res.end(readFileSync(file));
-  });
-  return new Promise((r) => server.listen(PORT, "127.0.0.1", () => r(server)));
-}
-
 async function main(): Promise<void> {
-  for (const pkg of ["pwa", "pwa-react", "vite", "devflow"]) {
-    if (!existsSync(join(KIT, "packages", pkg, "dist"))) throw new Error(`packages/${pkg}/dist 不存在——先跑 pnpm build`);
-  }
+  assertPackagesBuilt();
   prepareApp();
   build();
-  const server = await serve();
+  const server = await serve(SITE, PORT);
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();

@@ -75,6 +75,12 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0(react@19.3.0)
 
+  packages/runtime:
+    devDependencies:
+      happy-dom:
+        specifier: ^18.0.1
+        version: 18.0.1
+
   packages/vite:
     devDependencies:
       '@nexus-kit/pwa':
@@ -95,6 +101,9 @@ importers:
       '@nexus-kit/pwa-react':
         specifier: workspace:*
         version: link:../../packages/pwa-react
+      '@nexus-kit/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       react:
         specifier: ^19.3.0
         version: 19.3.0

@@ -26,6 +26,7 @@
   "dependencies": {
     "@nexus-kit/pwa": "workspace:*",
     "@nexus-kit/pwa-react": "workspace:*",
+    "@nexus-kit/runtime": "workspace:*",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

@@ -14,6 +14,7 @@
 - **架构**：[总览](docs/架构算法/总览.md) —— 包与边界、宿主接线、分发与版本、模板角色。改包结构/依赖关系/分发方式时更新。
 - **架构·离线与升级**：[离线与升级](docs/架构算法/离线与升级.md) —— 缓存策略、分区指纹换新、升级链与状态机、version.json 合同、安装与全屏。动 pwa/vite 包前先读。
 - **架构·部署与回滚**：[部署与回滚](docs/架构算法/部署与回滚.md) —— 服务器布局、部署流程、回滚、缓存头红线。动 devflow deploy 或 nginx 样板前先读。
+- **架构·日志与诊断**：[日志与诊断](docs/架构算法/日志与诊断.md) —— 日志分区缓冲、会话轮转持久化、导出格式、异常退出判词、诊断文件交付、离开前限时保存。动 runtime 的 /log、/lifecycle 前先读。
 - **架构·并行开发与发版**：[并行开发与发版](docs/架构算法/并行开发与发版.md) —— 工作树建/合/收、合入只快进、共享项与隔离、回收判定、Claude 钩子、发版链与发版锁。动 devflow worktree/release 前先读。
 - **登记册·平台坑账**：[平台坑账](docs/架构算法/平台坑账.md) —— 每个踩过的坑与 kit 里的防线。修 bug 先登记、先补失败测试。
 
@@ -25,7 +26,8 @@
 
 ### 设计
 
-- [分批抽取](docs/设计/分批抽取.md) —— 第一批取材与改法、第二批（音频/生命周期/诊断）与第三批（工作树/发版锁）的触发条件与验收。
+- [分批抽取](docs/设计/分批抽取.md) —— 第一批与第三批（工作树/发版锁）的取材与改法，第二批的去向。
+- [运行时基础设施](docs/设计/运行时基础设施.md) —— 第二批：日志、性能采集、生命周期取证与诊断导出、图像资源管理、音频播放的通用设计、验收与分期。
 
 ### 存档
 
@@ -39,11 +41,11 @@
 
 ## 2. 工程红线
 
-- pnpm workspace：`packages/*`（pwa、pwa-react、vite、devflow）、`templates/webapp`。
+- pnpm workspace：`packages/*`（pwa、pwa-react、runtime、vite、devflow）、`templates/webapp`。
 - TypeScript strict 全开、ESM only、禁 `any`，外部数据先 unknown 后校验。
-- pwa 零框架依赖；pwa-react 不写样式；包间只用 peerDependencies。
+- pwa、runtime 零框架依赖；pwa-react 不写样式；包间只用 peerDependencies。
 - `packages/*/dist` 入库，与源码同提交（`pnpm dist:check` 拦截）。
-- 常用命令：`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建四个包）、`pnpm e2e`（真浏览器升级链）、
+- 常用命令：`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链与日志诊断）、
   `pnpm init-app <目录>`（生成新项目）、`pnpm test:coverage`。
 
 ## 3. 工作流
@@ -52,4 +54,4 @@
 - 有明确输入输出的逻辑先写测试；bug 先用失败测试钉住并登记坑账。
 - 代码写完用独立 reviewer 审一遍再提交；改了模板里用户可见的行为（弹窗文案、交互）加产品评审。
 - 文档与代码同提交；新增活文档同提交登记到本索引。
-- 发布按《工程质量与交付规范》§4：落款 → 同步四包版本 → check + e2e → tag → 推送。
+- 发布按《工程质量与交付规范》§4：落款 → 同步全部包版本 → check + e2e → tag → 推送。
