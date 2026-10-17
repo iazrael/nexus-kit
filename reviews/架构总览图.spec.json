@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "nexus-kit 架构：包与边界",
+    "output": "架构总览图.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1340, 512],
+    "views": [
+      { "id": "runtime", "label": "浏览器运行时", "focus": ["app", "pwa", "pwa-react", "runtime"], "note": "宿主在浏览器侧接入 pwa、pwa-react、runtime 三个零框架依赖包。" },
+      { "id": "build", "label": "构建与工程", "focus": ["app", "vite", "devflow"], "note": "vite 与 devflow 在 Node 侧跑：构建期插件与工程 CLI。" },
+      { "id": "peer", "label": "包间 peer 依赖", "focus": ["devflow", "vite", "pwa", "pwa-react"], "note": "包与包之间只用 peerDependencies，同一 tag 同版本发布。" }
+    ]
+  },
+  "components": [
+    { "id": "app", "type": "external", "label": "宿主应用", "sublabel": "Web App · PWA", "pos": [640, 164], "size": [200, 200] },
+    { "id": "pwa", "type": "frontend", "label": "@nexus-kit/pwa", "sublabel": "控制器 · 升级状态机 · 安装 · 离线补缓存", "pos": [50, 66], "size": [320, 88] },
+    { "id": "pwa-react", "type": "frontend", "label": "@nexus-kit/pwa-react", "sublabel": "usePwaUpdate · useInstallPrompt", "pos": [50, 206], "size": [320, 88] },
+    { "id": "runtime", "type": "frontend", "label": "@nexus-kit/runtime", "sublabel": "/log /perf /assets /audio /lifecycle /boot", "pos": [50, 346], "size": [320, 88] },
+    { "id": "vite", "type": "backend", "label": "@nexus-kit/vite", "sublabel": "nexusPwa() · verifyPwaBuild()", "pos": [980, 150], "size": [320, 88] },
+    { "id": "devflow", "type": "backend", "label": "@nexus-kit/devflow", "sublabel": "docs-audit · deploy · worktree · release · task", "pos": [980, 290], "size": [320, 88] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "浏览器运行时", "wraps": ["pwa", "pwa-react", "runtime"] },
+    { "kind": "region", "label": "Node 构建与工程", "wraps": ["vite", "devflow"] }
+  ],
+  "connections": [
+    { "id": "app-to-pwa", "from": "app", "to": "pwa", "label": "createPwaController", "variant": "emphasis", "fromSide": "left", "toSide": "right" },
+    { "id": "app-to-pwa-react", "from": "app", "to": "pwa-react", "label": "hook", "fromSide": "left", "toSide": "right", "labelDx": -70 },
+    { "id": "app-to-runtime", "from": "app", "to": "runtime", "label": "import 子路径", "fromSide": "left", "toSide": "right" },
+    { "id": "app-to-vite", "from": "app", "to": "vite", "label": "构建期插件", "fromSide": "right", "toSide": "left" },
+    { "id": "app-to-devflow", "from": "app", "to": "devflow", "label": "工程 CLI", "fromSide": "right", "toSide": "left" },
+    { "id": "pwa-react-peer-pwa", "from": "pwa-react", "to": "pwa", "label": "peer", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelAt": [210, 180] },
+    { "id": "devflow-peer-vite", "from": "devflow", "to": "vite", "label": "peer", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelAt": [1140, 264] },
+    { "id": "vite-peer-pwa", "from": "vite", "to": "pwa", "label": "version-check 同源指纹", "variant": "dashed", "fromSide": "top", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "浏览器运行时", "items": ["pwa 与 runtime 零框架依赖：DOM、SW、Web Audio、Performance API 只在函数体内访问", "runtime 一个包、按子路径分模块，宿主只 import 用到的子路径", "pwa-react 只出 hook、不写样式"] },
+    { "dot": "violet", "title": "runtime 内部依赖", "items": ["/perf 与 /lifecycle 调 /log 的 registerSection、registerAppendix", "/assets 与 /audio 只用 /perf 的 registerGauge", "/lifecycle 直接 import /boot 的 reloadLatest，与 index.html 内联兜底同源"] },
+    { "dot": "emerald", "title": "分发与版本", "items": ["私有 git 子目录依赖钉 tag，packages/*/dist 入库", "包间只用 peerDependencies，同 tag 同版本发布", "templates/webapp 兼 playground、新项目起点与 e2e 被测应用"] }
+  ]
+}

@@ -13,6 +13,9 @@ temp/
 .build-number
 .build-number.lock
 
+# 评审/图示产物的可再生成浏览器证据（visual-check 截图与回执）
+reviews/*.visual-check.*
+
 # 环境变量与密钥
 .env
 .env.*
