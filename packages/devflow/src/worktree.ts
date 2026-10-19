@@ -575,17 +575,29 @@ function servicesIn(env: WorktreeEnv, root: string): Array<{ pid: number; ports:
   return [...listen].filter(([pid]) => !ancestors.has(pid) && isInside(cwds.get(pid) ?? "", root)).map(([pid, ports]) => ({ pid, ports }));
 }
 
-/** 回收工作树：先停服务，再查残留，最后删目录。分支保留 */
+/**
+ * 回收工作树：先停服务，再查残留，最后删目录。分支保留。
+ * 调用方的当前目录在待删树内时拒绝：目录删掉后调用方 shell 的工作目录失效，后续命令一律
+ * spawn ENOENT；工具改不了调用方的工作目录，只能拒绝。钩子回收不走这里（Claude 自己管会话目录）。
+ */
 export function worktreeRemove(env: WorktreeEnv, arg: string, opts: { force: boolean }): void {
   const layout = layoutOf(env);
   const root = resolveWorktreeArg(layout, worktrees(layout), arg) ?? resolve(layout.worktreesDir, arg);
-  removeWorktree(env, layout, root, { force: opts.force, deleteMergedHookBranch: false });
+  removeWorktree(env, layout, root, { force: opts.force, deleteMergedHookBranch: false, guardCwd: true });
 }
 
-function removeWorktree(env: WorktreeEnv, layout: Layout, root: string, opts: { force: boolean; deleteMergedHookBranch: boolean }): void {
+function removeWorktree(
+  env: WorktreeEnv,
+  layout: Layout,
+  root: string,
+  opts: { force: boolean; deleteMergedHookBranch: boolean; guardCwd: boolean },
+): void {
   const wt = worktrees(layout).find((w) => w.path === root);
   if (wt === undefined) throw new Error(`[worktree] 不是本仓库的工作树：${root}（pnpm worktree:ls 查看全部）`);
   if (wt.main) throw new Error("[worktree] 不能回收主仓库");
+  if (opts.guardCwd && existsSync(root) && isInside(realpathSync(env.cwd), root)) {
+    throw new Error(`[worktree] 拒绝回收 ${root}：当前目录在这个工作树里，删掉后当前 shell 会失效。先 cd ${layout.mainRoot} 再执行`);
+  }
   if (wt.locked) {
     throw new Error(`[worktree] ${root} 已锁定，通常是有 Claude 会话正在用。确认没人在用后 git worktree unlock ${root} 再回收`);
   }
@@ -686,5 +698,9 @@ export function hookRemove(env: WorktreeEnv, input: unknown): void {
   const path = objectInput(input).worktree_path;
   if (typeof path !== "string" || path === "") throw new Error("[worktree] 钩子输入缺少 worktree_path");
   const layout = layoutOf(env);
-  removeWorktree(env, layout, existsSync(path) ? realpathSync(path) : resolve(path), { force: false, deleteMergedHookBranch: true });
+  removeWorktree(env, layout, existsSync(path) ? realpathSync(path) : resolve(path), {
+    force: false,
+    deleteMergedHookBranch: true,
+    guardCwd: false,
+  });
 }

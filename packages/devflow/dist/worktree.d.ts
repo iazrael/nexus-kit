@@ -54,7 +54,11 @@ export declare function worktreeNew(env: WorktreeEnv, opts: NewOptions): {
 export declare function worktreeIsolate(env: WorktreeEnv, names: readonly string[], empty: boolean): void;
 /** 合回主干（只快进）+ 合入后命令；返回 "ff" 或 "up-to-date" */
 export declare function worktreeMerge(env: WorktreeEnv, arg: string): "ff" | "up-to-date";
-/** 回收工作树：先停服务，再查残留，最后删目录。分支保留 */
+/**
+ * 回收工作树：先停服务，再查残留，最后删目录。分支保留。
+ * 调用方的当前目录在待删树内时拒绝：目录删掉后调用方 shell 的工作目录失效，后续命令一律
+ * spawn ENOENT；工具改不了调用方的工作目录，只能拒绝。钩子回收不走这里（Claude 自己管会话目录）。
+ */
 export declare function worktreeRemove(env: WorktreeEnv, arg: string, opts: {
     force: boolean;
 }): void;

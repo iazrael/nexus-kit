@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+- 修复：worktree rm 在调用方当前目录位于待删工作树内时拒绝执行并提示先 cd 回主仓库，不再删掉调用方 shell 的工作目录导致后续命令全部 spawn ENOENT。
+
 ## [0.7.0] - 2026-10-15
 
 - 修复：task dispatch（含预览）、resume、verify、accept 提示固定起点脱离当前主仓历史的风险，stderr 与 JSON 保留两个 SHA 和原树处理步骤；不自动改写基准或拒绝有效交付。

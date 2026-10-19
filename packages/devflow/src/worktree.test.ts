@@ -371,6 +371,26 @@ describe("worktree rm", () => {
     expect(() => worktreeRemove(h.env(), "side", { force: false })).toThrow(/\n {4}a\.txt/);
   });
 
+  it("调用方站在待删工作树里（树根或子目录，按名或按路径）拒绝回收，什么都不动；站在别处照常回收", () => {
+    const h = harness();
+    const { root } = worktreeNew(h.env(), { branch: "side" });
+    const other = worktreeNew(h.env(), { branch: "other" }).root;
+    mkdirSync(join(root, "deep/er"), { recursive: true });
+    h.procs.listen.set(500, [4183]);
+    h.procs.cwds.set(500, root);
+    for (const [cwd, arg] of [
+      [root, "side"],
+      [join(root, "deep/er"), "side"],
+      [join(root, "deep"), root],
+    ] as const) {
+      expect(() => worktreeRemove(h.env(cwd), arg, { force: true })).toThrow(/当前目录在这个工作树里.*cd /s);
+    }
+    expect(existsSync(root)).toBe(true);
+    expect(h.procs.stopped).toEqual([]);
+    worktreeRemove(h.env(other), "side", { force: true });
+    expect(existsSync(root)).toBe(false);
+  });
+
   it("当前目录恰有同名目录时，rm 仍按工作树名找到目标", () => {
     const h = harness();
     const { root } = worktreeNew(h.env(), { branch: "side" });
