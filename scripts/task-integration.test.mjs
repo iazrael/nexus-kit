@@ -1168,8 +1168,13 @@ test("进度采样失败会终止执行器并留下失败收尾，不能丢下 r
   t.after(() => {
     if (existsSync(gitfile)) writeFileSync(gitfile, original);
   });
-  await new Promise((r) => setTimeout(r, 400));
-  const info = JSON.parse(readFileSync(join(launch.runDir, "run.json"), "utf8"));
+  // 树的 .git 已写坏，status 读不了，直接轮询运行记录；固定等待在机器繁忙时会先于监督进程收尾
+  let info;
+  for (let n = 0; n < 250; n++) {
+    info = JSON.parse(readFileSync(join(launch.runDir, "run.json"), "utf8"));
+    if (info.endedAt) break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
   t.after(() => {
     try {
       if (info.executorPid) process.kill(-info.executorPid, "SIGKILL");
