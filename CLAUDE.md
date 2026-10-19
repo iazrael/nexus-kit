@@ -59,7 +59,7 @@
 - pwa、runtime 零框架依赖；pwa-react 不写样式；包间只用 peerDependencies。
 - `packages/*/dist` 入库，与源码同提交（`pnpm dist:check` 拦截）。
 - 常用命令：`pnpm worktree:new|merge|rm|ls`（并行开发，见交付规范 §5）、`pnpm check`（完成标准）、`pnpm test`、`pnpm build`（构建全部包）、`pnpm e2e`（真浏览器升级链、日志诊断、图像资源与音频）、
-  `pnpm init-app <目录>`（生成新项目）、`pnpm test:coverage`。
+  `pnpm init-app <目录>`（生成新项目）、`pnpm install-cli`（建立或修复 PATH 上的 nexus-devflow）、`pnpm test:coverage`。
 
 ## 3. 工作流
 

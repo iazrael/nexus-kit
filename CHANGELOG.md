@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+- 新增：kit 根目录 `pnpm install-cli`，建立或修复 `nexus-devflow` 全局命令：软链永远指向 kit 主仓库的 `packages/devflow/dist/cli.js`（在工作树里执行也一样），默认放 `~/.local/bin`（`--bin-dir` 可改）；同名软链替换、普通文件拒绝；目录不在 PATH 或被同名命令遮住时打印处理办法并非零退出；最后自检 `nexus-devflow --help`。
+- 修复：`nexus-devflow --help` 打印用法后以 0 退出，不再按未知子命令报错退出 2。
 - 修复：worktree rm 在调用方当前目录位于待删工作树内时拒绝执行并提示先 cd 回主仓库，不再删掉调用方 shell 的工作目录导致后续命令全部 spawn ENOENT。
 - 新增：task 执行器接口。配置从 task.agy 单段改为 task.executor（默认执行器名）加 task.executors（每个执行器的启动命令、必填模型与权限参数），内置 agy 与 opencode 双适配器；只写旧 task.agy 段的配置按单执行器等价读取；0.7.0 冻结的派发快照在宿主 nexus.config.json 不改动时直接加载与续跑。任务 execution 段可覆盖执行器与模型，dispatch/resume 加 `--model`（已有快照换模型须同时 `--refresh-definition`；执行器在 task start 建树前就失败、任务分支尚不存在时，可在主仓 `dispatch --refresh-definition --model` 重新确认后重派）。
 - 新增：每次运行收尾写结束分类 endReason（delivered/blocked/interrupted/needs_approval/failed）并追加一行到该任务控制目录下的 notify.log（`<controlDir>/<任务标识>/notify.log`）；`task status` 在进程状态后显示分类。needs_approval 识别“退出码 0 却停在计划确认”的运行，只是给协调者的诊断提示，不改写真实退出码、不授予任何权限。结束流水写入失败保留诊断不改变收尾。

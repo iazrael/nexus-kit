@@ -280,6 +280,10 @@ async function main(cmd: string | undefined): Promise<number> {
       return worktreeCmd(process.argv.slice(3));
     case "release":
       return releaseCmd(process.argv.slice(3));
+    case "--help":
+    case "-h":
+      console.log(USAGE);
+      return 0;
     default:
       console.error(USAGE);
       return 2;
