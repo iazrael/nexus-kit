@@ -1,3 +1,4 @@
+import { recordRunEnd } from "./run-end.ts";
 import { git, atomic } from "./io.ts";
 import type {
   TaskContext,
@@ -17,7 +18,7 @@ import type { ChildProcess } from "node:child_process";
 import { loadNexusConfig } from "../config.ts";
 import { worktreeNew } from "../worktree.ts";
 import { systemProcessProbe } from "../worktree-procs.ts";
-import { taskWorktree } from "./config.ts";
+import { legacyTaskConfig, taskWorktree } from "./config.ts";
 import {
   assertMainClean,
   beginMainAudit,
@@ -30,7 +31,8 @@ import {
 import { errorMessage, errorCode, printable, checkFingerprint } from "./validation.ts";
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.ts";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { agySessions, agyResult, agyInvocation } from "./agy.ts";
+import { executorByName } from "./executor.ts";
+import type { Executor } from "./types.ts";
 import {
   existsSync,
   realpathSync,
@@ -44,6 +46,8 @@ import {
   closeSync,
   chmodSync,
   lstatSync,
+  copyFileSync,
+  constants,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,7 +60,6 @@ import {
   header,
   setHeader,
   record,
-  writeJson,
   sha,
   fingerprint,
   nonce,
@@ -118,7 +121,11 @@ function checkDefinition(ctx: TaskContext, snap: Snapshot, root: string) {
   const task = readTask(root, ctx.cfg, snap.spec.id);
   checkFingerprint(snap.definition, task.definition, "任务定义已变化，需要重新派发或重新确认");
   checkFingerprint(snap.nexusHash, fingerprint(safePath(root, "nexus.config.json")), "工作树后端配置已变化，旧派发记录失效");
-  checkFingerprint(snap.configHash, sha(JSON.stringify(config(root))), "项目配置已变化，旧派发记录失效");
+  const current = config(root),
+    legacy = legacyTaskConfig(current),
+    configHash = sha(JSON.stringify(current));
+  if (legacy === null || snap.configHash !== sha(JSON.stringify(legacy)))
+    checkFingerprint(snap.configHash, configHash, "项目配置已变化，旧派发记录失效");
   for (const rule of snap.rules) checkFingerprint(rule.sha256, fingerprint(safePath(root, rule.path)), `公共规则已变化：${rule.path}`);
   return task;
 }
@@ -176,7 +183,20 @@ function prepare(ctx: TaskContext, id: string, refresh = false): Snapshot {
   if (existsSync(snapshotPath(ctx, id))) {
     const old = loadSnapshot(ctx, id);
     if (refresh) {
-      check(realpathSync(ctx.root) === realpathSync(worktree(ctx, old)), "重新确认必须在原任务工作树执行");
+      const oldTree = worktree(ctx, old);
+      if (!existsSync(oldTree)) {
+        // The executor failed before task start built the tree: nothing has been
+        // done yet, so the main repo may re-confirm (e.g. switch model) and re-dispatch.
+        const branchExists =
+          spawnSync("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${old.spec.branch}`], { cwd: ctx.mainRoot }).status === 0;
+        check(
+          task.status === "待认领" && !branchExists && ctx.root === ctx.mainRoot,
+          `原任务工作树 ${printable(oldTree)} 不存在${branchExists ? `，分支 ${old.spec.branch} 仍在` : ""}；重新确认必须在原任务工作树执行，现场缺失时保留记录交协调者处理`,
+        );
+        check(old.spec.branch === snap.spec.branch && old.spec.worktree === snap.spec.worktree, "重新确认不能更换任务分支或工作树");
+        return snap;
+      }
+      check(realpathSync(ctx.root) === realpathSync(oldTree), "重新确认必须在原任务工作树执行");
       check(["返工", "中断", "受阻", "执行中"].includes(task.status), "当前状态不能重新确认");
       check(old.spec.branch === snap.spec.branch && old.spec.worktree === snap.spec.worktree, "重新确认不能更换任务分支或工作树");
       const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", old.base, "HEAD"], { cwd: ctx.root });
@@ -441,7 +461,7 @@ export function shortStatus(result: { tasks: TaskStatus[] }) {
                     : v.passed
                       ? "通过"
                       : "失败";
-      return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}${t.run?.mainWarning ? "（主仓新提交）" : ""}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
+      return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}${t.run?.mainWarning ? "（主仓新提交）" : ""}${t.run?.endReason ? `（${clean(t.run.endReason)}）` : ""}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
     })
     .join("\n");
 }
@@ -466,10 +486,8 @@ function latestRun(ctx: TaskContext, id: string) {
   const file = safePath(ctx.mainRoot, `${ctx.cfg.controlDir}/${id}/runs/${directory}/run.json`);
   return { file, data: readRun(file), directory };
 }
-function runInfo(ctx: TaskContext, id: string) {
-  const run = latestRun(ctx, id);
-  if (!run) return null;
-  const info = run.data;
+/** A record still marked running whose supervisor is gone reads as interrupted; the file itself is left untouched. */
+export function settleRun(info: RunInfo): RunInfo {
   if (
     ["starting", "running"].includes(info.state) &&
     !alive(info.supervisorPid) &&
@@ -477,6 +495,10 @@ function runInfo(ctx: TaskContext, id: string) {
   )
     return { ...info, state: "interrupted", error: "监督进程已退出，原记录没有收尾；核对现场后恢复" };
   return info;
+}
+function runInfo(ctx: TaskContext, id: string) {
+  const run = latestRun(ctx, id);
+  return run ? settleRun(run.data) : null;
 }
 function noRunning(ctx: TaskContext, id: string) {
   const info = runInfo(ctx, id);
@@ -487,7 +509,7 @@ function noRunning(ctx: TaskContext, id: string) {
 }
 function promptFor(ctx: TaskContext, snap: Snapshot, resume: boolean) {
   const id = snap.spec.id;
-  return `${resume ? "继续原会话与原工作树，不重建现场。" : "执行已分配的独立任务。"}\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n先阅读任务与公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task start ${id} --owner agy，自建或恢复工作树。工具启动目录为 ${snap.sourceRoot}。\n建树后只在指定树内白名单操作，不修改主仓或其他工作树；输入副本由 start 按指纹准备。\n目标：${snap.spec.goal}\n范围：${snap.spec.scope}\n每阶段更新同一任务并提交，保留失败命令、输出、现场和下一步。返工时以任务文件最新返工要求为准，逐项核对缺陷、复现命令和通过标准。只标待验收，不自行通过、合入、推送或发布。\n预算 ${snap.config.budgetMinutes} 分钟为进度检查节点，不删除现场；同方法三次失败保存证据并标受阻。\n最终回复给交付 SHA、复现命令、实际结果和未验证范围。`;
+  return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，先核对本次派发已批准的任务范围；范围内直接续跑，不要重复等待同一批准。" : "执行已分配的独立任务。协调者派发表示已批准任务文件明确列出的计划与范围。"}\n把范围内的实施步骤写入任务执行记录后继续实施，不要结束回合等待重复批准。需要扩展范围、改变验收目标或新增未授权动作时，保存证据并交回协调者，不能借派发扩大授权。\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n先阅读任务与公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task start ${id} --owner ${snap.config.executor}，自建或恢复工作树。工具启动目录为 ${snap.sourceRoot}。\n建树后只在指定树内白名单操作，不修改主仓或其他工作树；输入副本由 start 按指纹准备。\n目标：${snap.spec.goal}\n范围：${snap.spec.scope}\n每阶段更新同一任务并提交，保留失败命令、输出、现场和下一步。返工时以任务文件最新返工要求为准，逐项核对缺陷、复现命令和通过标准。先阅读背景、输入来源、禁改范围和逐项验收清单；不确定的事实用证据验证，缺少输入或标准时明确标受阻，不自行编造结论。只标待验收，不自行通过、合入、推送或发布。\n预算 ${snap.config.budgetMinutes} 分钟为进度检查节点，不删除现场；同方法三次失败保存证据并标受阻。\n最终回复给交付 SHA、复现命令、实际结果和未验证范围。`;
 }
 function baseRecovery(ctx: TaskContext, snap: Snapshot): string {
   return `保留原任务工作树 ${printable(worktree(ctx, snap))}；待验收任务先用 task rework ${snap.spec.id} --message-file <JSON 路径> 登记基准改写原因、复现命令和通过标准。再逐文件核对并完成变基或重放交付，在原树提交后用 task resume ${snap.spec.id} --refresh-definition 重新确认基准并交付，随后重新 verify、独立审查和 accept。仅刷新定义不能修复历史`;
@@ -501,11 +523,29 @@ function warnBase(ctx: TaskContext, snap: Snapshot): string | undefined {
   process.stderr.write(`[task] ${warning}\n`);
   return warning;
 }
+function modelOverride(snap: Snapshot, model: string) {
+  const name = snap.config.executor;
+  const previous = snap.config.executors[name];
+  check(previous !== undefined, `缺少执行器配置段：${name}`);
+  const settings = structuredClone(previous);
+  settings.model = text(model, "模型 --model");
+  return { name, settings: executorByName(name).parseSettings(settings) };
+}
 export async function dispatch(ctx: TaskContext, id: string, options: RunOptions = {}) {
   if (options.dryRun) {
     const snap = prepare(ctx, id, options.refreshDefinition),
       baseWarning = warnBase(ctx, snap);
-    return { id, base: snap.base, prompt: promptFor(ctx, snap, false), dryRun: true, ...(baseWarning ? { baseWarning } : {}) };
+    const executor = snap.config.executor;
+    if (options.model !== undefined) modelOverride(snap, options.model);
+    return {
+      id,
+      base: snap.base,
+      prompt: promptFor(ctx, snap, false),
+      dryRun: true,
+      executor,
+      model: options.model ?? snap.config.executors[executor]!.model,
+      ...(baseWarning ? { baseWarning } : {}),
+    };
   }
   const run = launch(ctx, id, false, options);
   return options.detach ? run : waitForRun(ctx, run);
@@ -532,9 +572,17 @@ async function waitForRun(ctx: TaskContext, run: LaunchResult) {
       if (cancelled) return { ...info, runDir: run.runDir, waitingCancelled: true, commandExitCode: cancelled };
       if (info.endedAt && ["completed", "failed", "interrupted"].includes(info.state)) {
         const commandExitCode = info.state === "completed" ? (info.taskStatus === "受阻" ? 3 : 0) : 1;
+        if (info.endMessage) process.stderr.write(`[task] ${info.endMessage}\n`);
+        if (info.notificationError) process.stderr.write(`[task] 结束流水写入失败：${info.notificationError}\n`);
         if (commandExitCode) process.stderr.write(`[task] ${info.error ?? "任务受阻"}；运行目录 ${run.runDir}\n`);
         if (info.mainWarning) process.stderr.write(`[task] ${info.mainWarning}\n`);
-        return { ...info, runDir: run.runDir, commandExitCode, ...(info.state === "completed" ? { result: agyResult(info.stdout) } : {}) };
+        const executor = executorByName(run.executor);
+        return {
+          ...info,
+          runDir: run.runDir,
+          commandExitCode,
+          ...(info.state === "completed" ? { result: executor.receipt(info.stdout) } : {}),
+        };
       }
       const pid = info.supervisorPid ?? run.supervisorPid;
       if (!alive(pid))
@@ -551,6 +599,15 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
     noRunning(ctx, id);
     assertMainClean(ctx.mainRoot);
     const snap = options.refreshDefinition ? prepare(ctx, id, true) : resuming ? loadSnapshot(ctx, id) : prepare(ctx, id);
+    const hadSnapshot = existsSync(snapshotPath(ctx, id));
+    if (options.model !== undefined) {
+      const { name, settings } = modelOverride(snap, options.model);
+      check(
+        !hadSnapshot || options.refreshDefinition || settings.model === snap.config.executors[name]!.model,
+        `派发快照已固定模型 ${snap.config.executors[name]!.model}；换模型加 --refresh-definition 重新确认`,
+      );
+      snap.config.executors[name] = settings;
+    }
     const wt = worktree(ctx, snap);
     const task = checkDefinition(ctx, snap, existsSync(wt) ? wt : snap.sourceRoot);
     const previous = latestRun(ctx, id);
@@ -569,7 +626,11 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
     const baseWarning = warnBase(ctx, snap);
     const definitionFile = snapshotPath(ctx, id);
     if (options.refreshDefinition && existsSync(definitionFile)) {
-      writeJson(join(control(ctx, id), "definitions", `${nonce()}.json`), loadSnapshot(ctx, id));
+      // Archive the original bytes; loadSnapshot normalizes legacy configs.
+      loadSnapshot(ctx, id);
+      const archive = join(control(ctx, id), "definitions");
+      mkdirSync(archive, { recursive: true });
+      copyFileSync(definitionFile, join(archive, `${nonce()}.json`), constants.COPYFILE_EXCL);
       atomic(definitionFile, snap);
     } else if (!existsSync(definitionFile)) atomic(definitionFile, snap);
     const directory = nonce(),
@@ -581,6 +642,7 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
       startedAt: new Date().toISOString(),
       supervisorPid: null,
       executorPid: null,
+      executor: snap.config.executor,
       conversationId,
       resume: resuming,
       sourceRoot: snap.sourceRoot,
@@ -613,6 +675,7 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
       id,
       state: "starting",
       supervisorPid: child.pid,
+      executor: snap.config.executor,
       conversationId,
       runDir,
       resume: resuming,
@@ -644,12 +707,13 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
     interruption: string | undefined,
     out: number | undefined,
     err: number | undefined,
-    sessionError: unknown;
-  const readSession = agySessions(join(runDir, "agy.debug.log"), info.resume ? info.conversationId : null);
+    sessionError: unknown,
+    endResponse: string | undefined;
+  let executor: Executor | undefined, readSession: (() => string | null) | undefined;
   const pollSession = () => {
     let id;
     try {
-      id = readSession();
+      id = readSession!();
     } catch (e) {
       if (!info.conversationId && e instanceof Error && "identifiedConversationId" in e && typeof e.identifiedConversationId === "string") {
         info.conversationId = e.identifiedConversationId;
@@ -686,19 +750,27 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
   process.once("SIGINT", stop);
   try {
     checkDefinition(ctx, snap, snap.sourceRoot);
-    const { exe, argv } = agyInvocation(
-      snap.config.agy,
+    executor = executorByName(snap.config.executor);
+    const executorSettings = snap.config.executors[snap.config.executor];
+    check(executorSettings !== undefined, `快照缺少执行器配置段：${snap.config.executor}`);
+    const executorLaunch = executor.invocation(
+      executorSettings,
       info.resume ? text(info.conversationId, "conversationId") : null,
-      join(runDir, "agy.debug.log"),
+      runDir,
+      info.stdout,
       readFileSync(join(runDir, "prompt.txt"), "utf8"),
     );
+    readSession = executor.sessionScanner(executorLaunch, info.resume ? info.conversationId : null);
     out = openSync(info.stdout, "wx");
     err = openSync(info.stderr, "wx");
-    child = spawn(text(exe, "执行器命令"), argv, {
+    // Grants exported in the coordinator shell belong to the coordinator, not to an executor launched from that shell.
+    const inherited = { ...process.env };
+    for (const name of snap.config.executorEnvDeny) delete inherited[name];
+    child = spawn(text(executorLaunch.exe, "执行器命令"), executorLaunch.argv, {
       cwd: snap.sourceRoot,
       detached: true,
       stdio: ["ignore", out, err],
-      env: { ...process.env, TASK_ID: id, TASK_ROOT: snap.sourceRoot, TASK_TOOL_CLI: toolCli() },
+      env: { ...inherited, TASK_ID: id, TASK_ROOT: snap.sourceRoot, TASK_TOOL_CLI: toolCli() },
     });
     info.executorPid = child.pid ?? null;
     info.state = "running";
@@ -739,11 +811,12 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
     pollSession();
     check(!exit.error, `执行器启动失败：${exit.error}`);
     check(exit.exitCode === 0 && !info.hardTimeout, `执行器退出码 ${exit.exitCode}，信号 ${exit.signal ?? "无"}`);
-    const result = agyResult(info.stdout);
-    if (info.conversationId) check(result.conversation_id === info.conversationId, "最终输出返回了不同会话，拒绝替换原会话");
-    info.conversationId = result.conversation_id;
+    const receipt = executor!.receipt(info.stdout);
+    if (info.conversationId) check(receipt.conversationId === info.conversationId, "最终输出返回了不同会话，拒绝替换原会话");
+    info.conversationId = receipt.conversationId;
     info.sessionSource ??= "final-json";
-    if (!readSession()) info.sessionWarning = "未识别启动日志会话格式；本次使用最终 JSON 登记";
+    endResponse = receipt.response;
+    if (!readSession!()) info.sessionWarning = "未识别会话日志格式；本次使用最终输出登记";
     const wt = worktree(ctx, snap);
     check(existsSync(wt), "执行器结束但任务树缺失");
     info.taskStatus = readTask(wt, ctx.cfg, id).status;
@@ -754,22 +827,16 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
     info.state = info.hardTimeout || info.stopRequested ? "interrupted" : "failed";
     info.error = errorMessage(e);
     // A failed output can still carry the session identifier needed for recovery.
-    if (existsSync(info.stdout)) {
+    if (executor && existsSync(info.stdout)) {
       try {
-        const result: unknown = JSON.parse(readFileSync(info.stdout, "utf8"));
-        if (
-          typeof result === "object" &&
-          result !== null &&
-          "conversation_id" in result &&
-          typeof result.conversation_id === "string" &&
-          result.conversation_id &&
-          !/[\s\0]/.test(result.conversation_id)
-        ) {
-          info.reportedConversationId = result.conversation_id;
-          if (!info.resume && !info.conversationId) info.conversationId = result.conversation_id;
+        const salvaged = executor.salvage(info.stdout);
+        if (salvaged.conversationId) {
+          info.reportedConversationId = salvaged.conversationId;
+          if (!info.resume && !info.conversationId) info.conversationId = salvaged.conversationId;
         }
-      } catch (parseError) {
-        info.outputError = errorMessage(parseError);
+        endResponse = salvaged.response;
+      } catch (salvageError) {
+        info.outputError = errorMessage(salvageError);
       }
     }
     interruption = `执行中断：${errorMessage(e)}；日志 ${relative(ctx.mainRoot, runDir)}`;
@@ -813,6 +880,7 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
       process.exitCode = 1;
     }
     info.endedAt = new Date().toISOString();
+    recordRunEnd(control(ctx, id), info, endResponse);
     save();
   }
   return info;
@@ -833,19 +901,32 @@ function delivery(ctx: TaskContext, snap: Snapshot) {
   const commit = git(wt, "rev-parse", "HEAD");
   const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", snap.base, commit], { cwd: wt });
   check(ancestor.status === 0, `交付提交不是固定起点的后续版本，先确认变基后的任务基准；${baseRecovery(ctx, snap)}`);
-  const changed = execFileSync("git", ["diff", "--no-renames", "--name-only", "-z", `${snap.base}..${commit}`], {
+  // --name-status -z without renames yields alternating "status\0path\0" records.
+  const records = execFileSync("git", ["diff", "--no-renames", "--name-status", "-z", `${snap.base}..${commit}`], {
     cwd: wt,
     encoding: "utf8",
   })
     .split("\0")
     .filter(Boolean);
-  const forbidden = changed.filter((path) => !snap.spec.writable.includes(path));
+  const changed: string[] = [],
+    deleted = new Set<string>();
+  for (let i = 0; i + 1 < records.length; i += 2) {
+    const status = records[i]!,
+      path = records[i + 1]!;
+    changed.push(path);
+    if (status === "D") deleted.add(path);
+  }
+  const deletable = snap.spec.deletable ?? [];
+  const forbidden = changed.filter((path) => (deleted.has(path) ? !deletable.includes(path) : !snap.spec.writable.includes(path)));
   if (forbidden.length) {
     const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
     const range = `${snap.base}..${commit}`;
     const details = forbidden.map((path) => {
       const commits = git(wt, "log", "--full-history", "--no-renames", "--format=%H", range, "--", path);
-      return `改动超出白名单：${JSON.stringify(path)}；相关提交：${commits.split("\n").join("、")}；查看：git -C ${quote(wt)} log --full-history --no-renames --oneline ${quote(range)} -- ${quote(path)}`;
+      const reason = deleted.has(path)
+        ? `删除未授权：${JSON.stringify(path)}；可写白名单不授权删除，确需删除时列入任务配置 deletable`
+        : `改动超出白名单：${JSON.stringify(path)}`;
+      return `${reason}；相关提交：${commits.split("\n").join("、")}；查看：git -C ${quote(wt)} log --full-history --no-renames --oneline ${quote(range)} -- ${quote(path)}`;
     });
     throw new Error(details.join("\n"));
   }

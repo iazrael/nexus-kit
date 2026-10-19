@@ -4,15 +4,24 @@
     "tasksDir": "tasks",
     "controlDir": ".cache/nexus-tasks",
     "rules": ["tasks/协作规则.md"],
+    "executor": "agy",
+    "executors": {
+      "agy": {
+        "command": ["agy"],
+        "model": "填写宿主已验证的模型",
+        "effort": "medium",
+        "mode": "accept-edits",
+        "permissionArgs": []
+      },
+      "opencode": {
+        "command": ["opencode"],
+        "model": "opencode/填写宿主已验证的模型",
+        "permissionArgs": []
+      }
+    },
+    "executorEnvDeny": [],
     "worktreeDir": ".worktrees",
     "postCreate": [],
-    "agy": {
-      "command": ["agy"],
-      "model": "填写宿主已验证的模型",
-      "effort": "medium",
-      "mode": "accept-edits",
-      "permissionArgs": []
-    },
     "budgetMinutes": 40,
     "progressMinutes": 10,
     "hardTimeoutMinutes": 0

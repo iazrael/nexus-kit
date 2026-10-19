@@ -2,9 +2,10 @@ import { basename, dirname, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { TaskConfig } from "./types.ts";
 import { check, object, text, command, number, safePath, stringList, maxMinutes } from "./validation.ts";
+import { parseExecutorSettings } from "./executor.ts";
+import { efforts, modes } from "./executor-agy.ts";
 
-export const efforts = ["low", "medium", "high", "xhigh", "max"];
-export const modes = ["accept-edits", "auto", "plan"];
+export { efforts, modes };
 /** hardTimeoutMinutes 0 means no hard limit; the other durations must be positive. */
 export function minutes(value: unknown, label: "budgetMinutes" | "progressMinutes" | "hardTimeoutMinutes"): number {
   return number(value, label, label === "hardTimeoutMinutes" ? 0 : 0.001, maxMinutes);
@@ -13,11 +14,20 @@ export function minutes(value: unknown, label: "budgetMinutes" | "progressMinute
 export function parseTaskConfig(value: unknown): TaskConfig {
   const cfg = object(value, "task 配置");
   check(cfg.version === 1, "task.version 必须为 1");
-  const agy = object(cfg.agy, "task.agy");
-  const effort = text(agy.effort, "task.agy.effort");
-  const mode = text(agy.mode, "task.agy.mode");
-  check(efforts.includes(effort), "agy.effort 不合法");
-  check(modes.includes(mode), "agy.mode 不合法");
+  // A config that only has the legacy task.agy section reads as the single agy
+  // executor, so snapshots frozen before executors existed keep loading. The
+  // public nexus-devflow also still reads task.agy, so a config may carry both
+  // shapes; the executors section wins.
+  const legacy = cfg.executors === undefined;
+  if (legacy && cfg.executor !== undefined)
+    throw new Error("task 配置混用新旧形状：写了 executor 却没有 executors 段，请补全 executors 或去掉 executor");
+  const executor = legacy ? "agy" : text(cfg.executor, "task.executor");
+  const rawExecutors = legacy ? { agy: cfg.agy } : object(cfg.executors, "task.executors");
+  const executors: TaskConfig["executors"] = {};
+  for (const [name, section] of Object.entries(rawExecutors)) executors[name] = parseExecutorSettings(name, section);
+  check(executor in executors, `默认执行器 ${executor} 缺少配置段`);
+  const executorEnvDeny = stringList(cfg.executorEnvDeny ?? [], "task.executorEnvDeny");
+  check(new Set(executorEnvDeny).size === executorEnvDeny.length, "task.executorEnvDeny 有重复变量名");
   const rules = stringList(cfg.rules, "task.rules");
   check(rules.length > 0, "rules 必须列出公共规则");
   const worktreeDir = cfg.worktreeDir === null ? null : text(cfg.worktreeDir ?? ".worktrees", "task.worktreeDir");
@@ -28,18 +38,36 @@ export function parseTaskConfig(value: unknown): TaskConfig {
     tasksDir: text(cfg.tasksDir, "task.tasksDir"),
     controlDir: text(cfg.controlDir, "task.controlDir"),
     rules,
-    agy: {
-      command: command(agy.command, "agy.command"),
-      model: text(agy.model, "agy.model"),
-      effort,
-      mode,
-      permissionArgs: stringList(agy.permissionArgs, "agy.permissionArgs"),
-    },
+    executor,
+    executors,
+    executorEnvDeny,
     worktreeDir,
     postCreate: postCreate.map((v) => command(v, "task.postCreate")),
     budgetMinutes: minutes(cfg.budgetMinutes, "budgetMinutes"),
     progressMinutes: minutes(cfg.progressMinutes, "progressMinutes"),
     hardTimeoutMinutes: minutes(cfg.hardTimeoutMinutes, "hardTimeoutMinutes"),
+  };
+}
+
+/**
+ * The config exactly as 0.7.0 parsed and hashed it, or null when the config
+ * uses anything 0.7.0 could not express (another executor, env deny list).
+ * Lets snapshots frozen before executors existed pass the config check.
+ */
+export function legacyTaskConfig(cfg: TaskConfig): Record<string, unknown> | null {
+  const names = Object.keys(cfg.executors);
+  if (cfg.executor !== "agy" || names.length !== 1 || cfg.executorEnvDeny.length) return null;
+  return {
+    version: cfg.version,
+    tasksDir: cfg.tasksDir,
+    controlDir: cfg.controlDir,
+    rules: cfg.rules,
+    agy: cfg.executors.agy,
+    worktreeDir: cfg.worktreeDir,
+    postCreate: cfg.postCreate,
+    budgetMinutes: cfg.budgetMinutes,
+    progressMinutes: cfg.progressMinutes,
+    hardTimeoutMinutes: cfg.hardTimeoutMinutes,
   };
 }
 

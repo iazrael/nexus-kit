@@ -1,18 +1,43 @@
 import type { WorktreeConfig } from "../config.ts";
 
-export interface AgyConfig {
+/** Every executor names its binary, an explicit model, and its permission flags. */
+export interface ExecutorSettings {
   command: string[];
   model: string;
+  permissionArgs: string[];
+}
+export interface AgySettings extends ExecutorSettings {
   effort: string;
   mode: string;
-  permissionArgs: string[];
+}
+export type OpencodeSettings = ExecutorSettings;
+export interface ExecutorLaunch {
+  exe: string;
+  argv: string[];
+  /** File the session scanner polls while the executor runs. */
+  sessionLog: string;
+}
+export interface ExecutorReceipt {
+  conversationId: string;
+  response?: string;
+}
+/** One executor adapter: how to launch it, track its session, and read its result. */
+export interface Executor {
+  parseSettings(value: unknown): ExecutorSettings;
+  invocation(settings: ExecutorSettings, conversationId: string | null, runDir: string, stdoutPath: string, prompt: string): ExecutorLaunch;
+  sessionScanner(launch: ExecutorLaunch, expected: string | null): () => string | null;
+  receipt(stdoutPath: string): ExecutorReceipt;
+  salvage(stdoutPath: string): { conversationId?: string; response?: string };
 }
 export interface TaskConfig {
   version: 1;
   tasksDir: string;
   controlDir: string;
   rules: string[];
-  agy: AgyConfig;
+  executor: string;
+  executors: Record<string, ExecutorSettings>;
+  /** Environment variables stripped before launching an executor, so coordinator grants are not inherited. */
+  executorEnvDeny: string[];
   worktreeDir: string | null;
   postCreate: string[][];
   budgetMinutes: number;
@@ -29,10 +54,17 @@ export interface TaskSpec {
   inputs: { path: string; sha256: string; source?: string }[];
   dependencies: { id: string; commit?: string }[];
   writable: string[];
+  /** Deleting a base file needs this explicit grant; writable alone only covers add/modify. */
+  deletable?: string[];
   verify: { name: string; argv: string[]; timeoutSeconds?: number }[];
   productReviewRequired?: boolean;
-  execution?: Partial<Pick<TaskConfig, "budgetMinutes" | "progressMinutes" | "hardTimeoutMinutes">> &
-    Partial<Pick<AgyConfig, "model" | "effort" | "mode">>;
+  execution?: Partial<Pick<TaskConfig, "budgetMinutes" | "progressMinutes" | "hardTimeoutMinutes">> & {
+    executor?: string;
+    model?: string;
+    /** Legacy agy-only knobs; other executors reject them. */
+    effort?: string;
+    mode?: string;
+  };
 }
 export interface TaskDefinition {
   spec: TaskSpec;
@@ -59,11 +91,16 @@ export interface Snapshot {
   rules: { path: string; sha256: string }[];
 }
 export interface RunInfo {
+  endReason?: "delivered" | "blocked" | "interrupted" | "needs_approval" | "failed" | null;
+  endMessage?: string;
+  notificationError?: string;
+  classificationError?: string;
   id: string;
   state: string;
   startedAt: string;
   supervisorPid: number | null;
   executorPid: number | null;
+  executor?: string;
   conversationId: string | null;
   resume: boolean;
   sourceRoot: string;
@@ -92,6 +129,7 @@ export interface LaunchResult {
   id: string;
   state: string;
   supervisorPid: number;
+  executor: string;
   conversationId: string | null;
   runDir: string;
   resume: boolean;
@@ -102,6 +140,7 @@ export interface RunOptions {
   detach?: boolean | undefined;
   refreshDefinition?: boolean | undefined;
   conversation?: string | undefined;
+  model?: string | undefined;
 }
 export interface CommandExit {
   exitCode: number | null;

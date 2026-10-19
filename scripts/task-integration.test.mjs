@@ -1,7 +1,7 @@
 import { createHash as cryptoHash } from "node:crypto";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, realpathSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, realpathSync, readdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,10 +36,20 @@ function repo() {
         tasksDir: "tasks",
         controlDir: "research/local/task-control",
         rules: ["tasks/协作规则.md"],
-        agy: { command: ["agy"], model: "test-model", effort: "medium", mode: "accept-edits", permissionArgs: [] },
+        executor: "agy",
+        executors: {
+          agy: {
+            command: ["agy"],
+            model: "test-model",
+            effort: "medium",
+            mode: "accept-edits",
+            permissionArgs: [],
+          },
+        },
         budgetMinutes: 40,
         progressMinutes: 10,
         hardTimeoutMinutes: 0,
+        executorEnvDeny: ["ALLOW_EVIDENCE_DELETE"],
       },
       worktree: { share: [], postCreate: [], postMerge: [] },
     }),
@@ -49,7 +59,11 @@ function repo() {
   return realpathSync(root);
 }
 function run(root, ...args) {
-  return spawnSync(process.execPath, [cli, "task", ...args], { cwd: root, encoding: "utf8", timeout: 20_000 });
+  return spawnSync(process.execPath, [cli, "task", ...args], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 20_000,
+  });
 }
 function success(result) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -144,10 +158,21 @@ test("status 读取真实工作树，并保留旧任务只读支持", () => {
 const executor = fileURLToPath(new URL("./fixtures/task-executor.mjs", import.meta.url));
 function executorConfig(root) {
   configure(root, (cfg) => {
-    cfg.agy.command = [process.execPath, executor];
+    cfg.executors.agy.command = [process.execPath, executor];
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "executor config");
+}
+function opencodeConfig(root, executorName = "opencode") {
+  configure(root, (cfg) => {
+    cfg.executors[executorName] = {
+      command: [process.execPath, executor, "--opencode"],
+      model: "opencode/test-model",
+      permissionArgs: [],
+    };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "opencode executor config");
 }
 async function finished(root, id = "cancel-buy") {
   for (let n = 0; n < 180; n++) {
@@ -191,6 +216,28 @@ test("dispatch 预览无副作用；未提交任务与指纹错误拒绝启动",
   assert.ok(bad.stderr.includes("实际 SHA-256 e5c6fde86910ded72db5cc7afc32f850440d4ef7caa5dbb69f5bdc0d3e39cb3b"), bad.stderr);
 });
 
+test("协调者 shell 里的删除放行变量不会传给执行者", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const envFile = join(root, "research/local/executor-env.json");
+  const result = spawnSync(process.execPath, [cli, "task", "dispatch", "cancel-buy", "--detach"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      TASK_TEST_SCENARIO: "complete",
+      TASK_TEST_ENV_FILE: envFile,
+      ALLOW_EVIDENCE_DELETE: "1",
+    },
+  });
+  success(result);
+  await finished(root);
+  assert.deepEqual(JSON.parse(readFileSync(envFile, "utf8")), {
+    allowEvidenceDelete: null,
+  });
+});
 test("dispatch 完整交付，status 显示会话；无前置不能启动", async () => {
   const root = repo();
   ready(root);
@@ -290,7 +337,14 @@ function review(root, commit) {
   const path = join(root, "review.json");
   writeFileSync(
     path,
-    JSON.stringify({ commit, code: { passed: true, reviewer: "independent-reviewer", record: "独立审查通过；范围内无阻断问题" } }),
+    JSON.stringify({
+      commit,
+      code: {
+        passed: true,
+        reviewer: "independent-reviewer",
+        record: "独立审查通过；范围内无阻断问题",
+      },
+    }),
   );
   return path;
 }
@@ -352,6 +406,101 @@ test("未提交内容、越界改动、变更后的代码和缺审查阻止通�
   assert.match(stale.stderr, /提交已变化/);
 });
 
+function deliveredWithDeletion(root, editSpec, change = (wt) => unlinkSync(join(wt, "guide.jpg"))) {
+  writeFileSync(join(root, "guide.jpg"), "image");
+  git(root, "add", ".");
+  git(root, "commit", "-m", "shared input");
+  ready(root);
+  editTask(root, editSpec);
+  git(root, "add", ".");
+  git(root, "commit", "-m", "deletion scope");
+  success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  const wt = join(root, ".worktrees/cancel-buy");
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  change(wt);
+  writeFileSync(taskPath(wt), readFileSync(taskPath(wt), "utf8").replace(/^> 状态：.*$/m, "> 状态：待验收"));
+  git(wt, "add", "-A");
+  git(wt, "commit", "-m", "delivery deletes shared input");
+  return wt;
+}
+
+test("可写白名单不授权删除：删除基准已有文件必须列入 deletable", () => {
+  const root = repo();
+  deliveredWithDeletion(root, (s) => s.writable.push("guide.jpg"));
+  const rejected = run(root, "verify", "cancel-buy");
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /删除未授权："guide\.jpg"/);
+  assert.match(rejected.stderr, /deletable/);
+  assert.notEqual(run(root, "accept", "cancel-buy", "--review", review(root, "0".repeat(40))).status, 0);
+});
+
+test("重命名按删除旧路径处理：旧路径未列入 deletable 时拒绝", () => {
+  const root = repo();
+  deliveredWithDeletion(
+    root,
+    (s) => s.writable.push("guide.jpg", "guide-renamed.jpg"),
+    (wt) => git(wt, "mv", "guide.jpg", "guide-renamed.jpg"),
+  );
+  const rejected = run(root, "verify", "cancel-buy");
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /删除未授权："guide\.jpg"/);
+  assert.doesNotMatch(rejected.stderr, /guide-renamed\.jpg/);
+});
+
+test("未声明 deletable 的任务配置字段与顺序不变，定义指纹不受新字段影响", async () => {
+  const { parseSpec, config } = await import("../packages/devflow/dist/task/definition.js");
+  const root = repo();
+  success(run(root, "new", "cancel-buy", "--title", "指纹"));
+  let raw;
+  editTask(root, (s) => {
+    raw = structuredClone(s);
+  });
+  const legacyKeys = [
+    "version",
+    "id",
+    "branch",
+    "worktree",
+    "goal",
+    "scope",
+    "writable",
+    "inputs",
+    "dependencies",
+    "verify",
+    "productReviewRequired",
+  ];
+  assert.deepEqual(Object.keys(parseSpec(raw, root, config(root), "cancel-buy")), legacyKeys);
+  const declared = parseSpec({ ...raw, deletable: ["guide.jpg"] }, root, config(root), "cancel-buy");
+  assert.deepEqual(Object.keys(declared), [...legacyKeys.slice(0, 7), "deletable", ...legacyKeys.slice(7)]);
+});
+
+test("deletable 声明的删除可以验收，路径越界或指向自身任务文件被拒", () => {
+  const allowed = repo();
+  deliveredWithDeletion(allowed, (s) => {
+    s.deletable = ["guide.jpg"];
+  });
+  assert.equal(success(run(allowed, "verify", "cancel-buy")).passed, true);
+
+  for (const [bad, message] of [
+    [["../outside.txt"], /路径|越界|outside/],
+    [["tasks/cancel-buy.md"], /不能删除自己的任务文件/],
+    [["guide.jpg", "guide.jpg"], /重复/],
+  ]) {
+    const root = repo();
+    success(run(root, "new", "cancel-buy", "--title", "删除范围"));
+    editTask(root, (s) => {
+      s.goal = "删除范围校验";
+      s.scope = "仅校验";
+      s.verify = [{ name: "noop", argv: [process.execPath, "-e", ""] }];
+      s.deletable = bad;
+    });
+    git(root, "add", ".");
+    git(root, "commit", "-m", "bad deletable");
+    const result = run(root, "start", "cancel-buy", "--owner", "执行者");
+    assert.notEqual(result.status, 0, JSON.stringify(bad));
+    assert.match(result.stderr, message);
+  }
+});
+
 test("路径软链、坏配置、缺 goal 和未知命令有明确失败", () => {
   const root = repo();
   ready(root);
@@ -372,7 +521,7 @@ test("路径软链、坏配置、缺 goal 和未知命令有明确失败", () =>
   const missing = run(root);
   assert.equal(missing.status, 2);
   configure(root, (cfg) => {
-    cfg.agy.mode = "typo";
+    cfg.executors.agy.mode = "typo";
   });
   assert.match(run(root, "status").stderr, /mode/);
 });
@@ -382,8 +531,18 @@ test("任务执行配置可覆盖默认预算与模型，输入只读副本不�
   ready(root);
   writeFileSync(join(root, "input.txt"), "fixture-input");
   editTask(root, (s) => {
-    s.execution = { model: "task-model", budgetMinutes: 1, progressMinutes: 0.5, hardTimeoutMinutes: 0 };
-    s.inputs = [{ path: "input.txt", sha256: "988d844190c9507fd0dc2489834de24120bc2971f8d473c0f372bdcc31d0f33b1" }];
+    s.execution = {
+      model: "task-model",
+      budgetMinutes: 1,
+      progressMinutes: 0.5,
+      hardTimeoutMinutes: 0,
+    };
+    s.inputs = [
+      {
+        path: "input.txt",
+        sha256: "988d844190c9507fd0dc2489834de24120bc2971f8d473c0f372bdcc31d0f33b1",
+      },
+    ];
   });
   // Pin the known fixture bytes; the digest is the external input fingerprint.
   editTask(root, (s) => {
@@ -428,7 +587,7 @@ test("执行器程序不存在时失败收尾，不能留下永久运行假象",
   const root = repo();
   ready(root);
   configure(root, (cfg) => {
-    cfg.agy.command = ["/nonexistent/task-executor"];
+    cfg.executors.agy.command = ["/nonexistent/task-executor"];
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "missing executor");
@@ -529,7 +688,11 @@ test("硬期限结束确认忽略 TERM 的后代也退出，才释放任务", as
   const r = spawnSync(process.execPath, [cli, "task", "dispatch", "cancel-buy", "--detach"], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, TASK_TEST_SCENARIO: "orphan", TASK_TEST_PID_FILE: pidFile },
+    env: {
+      ...process.env,
+      TASK_TEST_SCENARIO: "orphan",
+      TASK_TEST_PID_FILE: pidFile,
+    },
   });
   success(r);
   const done = await finished(root);
@@ -564,7 +727,7 @@ test("实际软链越界与规则漂移均拒绝，验证不碰原件", async ()
   assert.match(run(root, "start", "cancel-buy", "--owner", "executor").stderr, /公共规则已变化/);
   git(wt, "checkout", "--", "tasks/协作规则.md");
   configure(wt, (cfg) => {
-    cfg.agy.model = "changed";
+    cfg.executors.agy.model = "changed";
   });
   assert.match(run(root, "start", "cancel-buy", "--owner", "executor").stderr, /项目配置已变化|后端配置已变化/);
 });
@@ -589,7 +752,11 @@ test("产品评审缺失、验证材料改动以及未交付状态不能验收",
     r = review(root, head);
   assert.match(run(root, "accept", "cancel-buy", "--review", r).stderr, /product/);
   const value = JSON.parse(readFileSync(r, "utf8"));
-  value.product = { passed: true, reviewer: "product-reviewer", record: "cancel journey verified" };
+  value.product = {
+    passed: true,
+    reviewer: "product-reviewer",
+    record: "cancel journey verified",
+  };
   writeFileSync(r, JSON.stringify(value));
   writeFileSync(verified.receipt, readFileSync(verified.receipt, "utf8") + " ");
   assert.match(run(root, "accept", "cancel-buy", "--review", r).stderr, /材料指纹变化/);
@@ -603,7 +770,7 @@ test("任务与项目输入错误有清晰错误，配置不完整不默默套�
       cfg.version = 2;
     },
     (cfg) => {
-      cfg.agy.effort = "typo";
+      cfg.executors.agy.effort = "typo";
     },
     (cfg) => {
       cfg.rules = [];
@@ -612,7 +779,7 @@ test("任务与项目输入错误有清晰错误，配置不完整不默默套�
       cfg.budgetMinutes = -1;
     },
     (cfg) => {
-      cfg.agy.command = [];
+      cfg.executors.agy.command = [];
     },
   ]) {
     const root = repo();
@@ -759,7 +926,10 @@ test("默认等待报告失败和受阻，resume 返回原会话最终结果", (
 });
 
 function asyncRun(root, scenario, ...args) {
-  const child = spawn(process.execPath, [cli, "task", ...args], { cwd: root, env: { ...process.env, TASK_TEST_SCENARIO: scenario } });
+  const child = spawn(process.execPath, [cli, "task", ...args], {
+    cwd: root,
+    env: { ...process.env, TASK_TEST_SCENARIO: scenario },
+  });
   let stdout = "",
     stderr = "";
   child.stdout.on("data", (d) => (stdout += d));
@@ -860,7 +1030,7 @@ test("会话冲突不能覆盖启动 ID，未知日志格式回退最终 JSON，
     if (scenario === "unknown-log") {
       assert.equal(r.status, 0);
       assert.equal(result.conversationId, "fixture-session");
-      assert.match(result.sessionWarning, /最终 JSON/);
+      assert.match(result.sessionWarning, /最终输出/);
     } else {
       assert.equal(r.status, 1);
       assert.equal(result.conversationId, "4890d7e3-fa80-415d-b856-23ed106ba9bc");
@@ -873,7 +1043,11 @@ function reworkMessage(root) {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(
     p,
-    JSON.stringify({ defects: "取消后余额变化", reproduce: "node cancel-probe.mjs --cancel", criteria: "余额与库存保持不变" }),
+    JSON.stringify({
+      defects: "取消后余额变化",
+      reproduce: "node cancel-probe.mjs --cancel",
+      criteria: "余额与库存保持不变",
+    }),
   );
   return p;
 }
@@ -924,7 +1098,9 @@ test("rework 拒绝脏树、错误分支、不完整说明、运行中和已通�
   const broken = repo(),
     tree = delivered(broken),
     hooks = join(broken, ".git/hooks");
-  writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n", {
+    mode: 0o755,
+  });
   const failed = run(broken, "rework", "cancel-buy", "--message-file", reworkMessage(broken));
   assert.equal(failed.status, 1);
   assert.equal(git(tree, "log", "-1", "--format=%s"), "delivery");
@@ -1030,7 +1206,10 @@ test("任务树缺失时短状态注明调用树记录，验证不能冒充可�
 test("无 task 配置时普通命令仍能运行，task 报接入提示", () => {
   const root = repo();
   writeFileSync(join(root, "nexus.config.json"), "{}");
-  const wt = spawnSync(process.execPath, [cli, "worktree", "ls"], { cwd: root, encoding: "utf8" });
+  const wt = spawnSync(process.execPath, [cli, "worktree", "ls"], {
+    cwd: root,
+    encoding: "utf8",
+  });
   assert.equal(wt.status, 0, wt.stderr);
   assert.match(run(root, "new", "sample", "--title", "示例").stderr, /缺少 task 段/);
 });
@@ -1134,7 +1313,7 @@ test("执行器成功交付后也回收忽略 TERM 的后代，返回后不存�
     `import{spawn,spawnSync}from'node:child_process';import{writeFileSync}from'node:fs';const c=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'ignore'});c.unref();writeFileSync(${JSON.stringify(pidfile)},String(c.pid));const r=spawnSync(process.execPath,[${JSON.stringify(executor)},...process.argv.slice(2)],{stdio:'inherit',env:process.env});process.exit(r.status);`,
   );
   configure(root, (c) => {
-    c.agy.command = [process.execPath, fake];
+    c.executors.agy.command = [process.execPath, fake];
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "executor with descendant");
@@ -1270,7 +1449,10 @@ for (const command of ["dispatch", "resume"]) {
 }
 function mainAuditFiles(root) {
   const dir = join(root, "research/local/task-control/cancel-buy/main-audit");
-  return { dir, files: existsSync(dir) ? readdirSync(dir).filter((p) => p.endsWith(".json")) : [] };
+  return {
+    dir,
+    files: existsSync(dir) ? readdirSync(dir).filter((p) => p.endsWith(".json")) : [],
+  };
 }
 function mainReview(root) {
   const { dir, files } = mainAuditFiles(root);
@@ -1283,7 +1465,14 @@ function mainReview(root) {
         .digest("hex"),
     }));
   const file = join(root, "main-review.json");
-  writeFileSync(file, JSON.stringify({ reviewer: "coordinator", reason: "核对主仓改动，确认内容保留", incidents }));
+  writeFileSync(
+    file,
+    JSON.stringify({
+      reviewer: "coordinator",
+      reason: "核对主仓改动，确认内容保留",
+      incidents,
+    }),
+  );
   return file;
 }
 for (const scenario of ["main-write", "main-amend", "main-child-write"]) {
@@ -1496,7 +1685,12 @@ test("未跟踪且未被 Git 忽略的输入拒绝派发；加入忽略后复制
   mkdirSync(join(root, "data"));
   writeFileSync(join(root, "data/in.txt"), "raw");
   editTask(root, (s) => {
-    s.inputs = [{ path: "data/in.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+    s.inputs = [
+      {
+        path: "data/in.txt",
+        sha256: cryptoHash("sha256").update("raw").digest("hex"),
+      },
+    ];
   });
   git(root, "add", "tasks");
   git(root, "commit", "-m", "untracked input");
@@ -1590,16 +1784,37 @@ test("默认 quotepath 下中文规则与已提交的中文输入照常派发；
   writeFileSync(join(root, "需求输入.txt"), "raw");
   writeFileSync(join(root, "staged-only.txt"), "raw");
   editTask(root, (s) => {
-    s.inputs = [{ path: "需求输入.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+    s.inputs = [
+      {
+        path: "需求输入.txt",
+        sha256: cryptoHash("sha256").update("raw").digest("hex"),
+      },
+    ];
   });
   git(root, "add", ".");
   git(root, "reset", "-q", "--", "staged-only.txt");
   git(root, "commit", "-m", "chinese input");
-  const env = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.quotepath", GIT_CONFIG_VALUE_0: "true" };
-  const quoted = (...args) => spawnSync(process.execPath, [cli, "task", ...args], { cwd: root, encoding: "utf8", timeout: 20_000, env });
+  const env = {
+    ...process.env,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.quotepath",
+    GIT_CONFIG_VALUE_0: "true",
+  };
+  const quoted = (...args) =>
+    spawnSync(process.execPath, [cli, "task", ...args], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 20_000,
+      env,
+    });
   success(quoted("dispatch", "cancel-buy", "--dry-run"));
   editTask(root, (s) => {
-    s.inputs = [{ path: "staged-only.txt", sha256: cryptoHash("sha256").update("raw").digest("hex") }];
+    s.inputs = [
+      {
+        path: "staged-only.txt",
+        sha256: cryptoHash("sha256").update("raw").digest("hex"),
+      },
+    ];
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "staged input", "--", "tasks");
@@ -1801,4 +2016,466 @@ test("任务定义返工并重新确认后，旧验证材料报出新旧定义�
   fingerprintDiagnostic(rejected, /定义不匹配/);
   assert.ok(rejected.stderr.includes("期望 SHA-256 " + snapshot.definition), rejected.stderr);
   assert.ok(rejected.stderr.includes("实际 SHA-256 " + verified.definition), rejected.stderr);
+});
+
+test("本地实践：计划停等有分类与流水，原会话续跑后交付", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const watching = asyncRun(root, "none", "watch", "cancel-buy", "--poll-ms", "10", "--timeout-minutes", "0.2");
+  const stopped = await asyncRun(root, "plan-stop", "dispatch", "cancel-buy").result;
+  const observed = await watching.result;
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.match(observed.stdout, /needs_approval/);
+  assert.equal(stopped.status, 1, stopped.stderr);
+  const info = JSON.parse(stopped.stdout);
+  assert.equal(info.state, "failed");
+  assert.equal(info.exitCode, 0);
+  assert.equal(info.endReason, "needs_approval");
+  assert.equal(success(run(root, "status", "cancel-buy")).tasks[0].run.endReason, "needs_approval");
+  const log = join(root, "research/local/task-control/cancel-buy/notify.log");
+  assert.match(readFileSync(log, "utf8"), /needs_approval/);
+  const tree = join(root, ".worktrees/cancel-buy");
+  const before = git(tree, "rev-parse", "HEAD");
+  const resumed = success(await asyncRun(root, "complete", "resume", "cancel-buy").result);
+  assert.equal(resumed.conversationId, "fixture-session");
+  assert.equal(resumed.state, "completed");
+  assert.notEqual(git(tree, "rev-parse", "HEAD"), before);
+  assert.match(readFileSync(log, "utf8"), /delivered/);
+});
+
+test("本地实践：派发写清已批准范围，续跑不再停在同一计划确认，短状态指出停等", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.match(preview.prompt, /已批准.*范围/);
+  assert.match(preview.prompt, /不要结束回合等待.*批准/);
+  assert.match(preview.prompt, /扩.*范围/);
+  const stopped = await asyncRun(root, "plan-stop", "dispatch", "cancel-buy").result;
+  assert.equal(stopped.status, 1);
+  assert.match(run(root, "status", "cancel-buy", "--short").stdout, /needs_approval/);
+  const resumed = success(await asyncRun(root, "complete", "resume", "cancel-buy").result);
+  assert.match(readFileSync(join(resumed.runDir, "prompt.txt"), "utf8"), /上次.*计划确认/);
+});
+
+test("本地实践：结束分类覆盖英文、真失败、受阻和成功回复中的计划字样", async () => {
+  for (const [scenario, reason, exit] of [
+    ["plan-english", "needs_approval", 1],
+    ["plan-nonzero", "failed", 1],
+    ["ordinary-no-delivery", "failed", 1],
+    ["blocked", "blocked", 3],
+    ["complete-mentions-plan", "delivered", 0],
+    ["fail", "failed", 1],
+  ]) {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    const r = await asyncRun(root, scenario, "dispatch", "cancel-buy").result;
+    assert.equal(r.status, exit, r.stderr);
+    const info = JSON.parse(r.stdout);
+    assert.equal(info.endReason, reason, scenario);
+    const rows = readFileSync(join(root, "research/local/task-control/cancel-buy/notify.log"), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].reason, reason);
+  }
+});
+test("本地实践：流水不可写或是软链会留诊断，不能伪造交付失败或改写目标", async () => {
+  for (const scenario of ["log-directory", "log-symlink", "log-fifo"]) {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    const r = await asyncRun(root, scenario, "dispatch", "cancel-buy").result;
+    const info = success(r);
+    assert.equal(info.state, "completed");
+    assert.equal(info.endReason, "delivered");
+    assert.ok(info.notificationError);
+    assert.match(r.stderr, /流水写入失败/);
+    if (scenario === "log-symlink") assert.equal(readFileSync(join(root, "research/local/protected.log"), "utf8"), "protected");
+  }
+});
+
+test("本地实践：任务模板给接手模型列出背景、授权、步骤和逐项证据要求", () => {
+  const root = repo();
+  success(run(root, "new", "cancel-buy", "--title", "取消购买核验"));
+  const body = readFileSync(taskPath(root), "utf8");
+  for (const section of ["背景与证据", "已批准计划与授权", "输入与操作步骤", "验收清单", "交付物与失败处理"])
+    assert.ok(body.includes("## " + section), section);
+  assert.match(body, /预期结果/);
+  assert.match(body, /负例/);
+  assert.match(body, /不得.*猜测.*事实/);
+});
+
+// ---- 执行器接口：opencode 适配器、任务级执行器与派发级模型覆盖 ----
+
+function defaultOpencode(root) {
+  opencodeConfig(root);
+  configure(root, (cfg) => {
+    cfg.executor = "opencode";
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "default opencode");
+}
+
+test("opencode 执行器完整交付，登记执行器、会话与最终回复", async () => {
+  const root = repo();
+  ready(root);
+  defaultOpencode(root);
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.equal(preview.executor, "opencode");
+  assert.equal(preview.model, "opencode/test-model");
+  assert.match(preview.prompt, /--owner opencode/);
+  const done = success(await asyncRun(root, "complete", "dispatch", "cancel-buy").result);
+  assert.equal(done.state, "completed");
+  assert.equal(done.executor, "opencode");
+  assert.equal(done.conversationId, "ses-fixture-session");
+  assert.equal(done.result.response, "delivered");
+  assert.equal(git(root, "status", "--porcelain"), "");
+});
+
+test("opencode 失败后按原会话续跑，现场不重建", async () => {
+  const root = repo();
+  ready(root);
+  defaultOpencode(root);
+  const failed = JSON.parse((await asyncRun(root, "fail", "dispatch", "cancel-buy").result).stdout);
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.exitCode, 7);
+  const resumed = success(await asyncRun(root, "complete", "resume", "cancel-buy", "--conversation", "ses-fixture-session").result);
+  assert.equal(resumed.state, "completed");
+  assert.equal(resumed.resume, true);
+  assert.equal(resumed.conversationId, "ses-fixture-session");
+  assert.match(readFileSync(resumed.stdout, "utf8"), /resumed/);
+});
+
+test("opencode 从输出流提前登记会话，未知格式回退最终输出", async () => {
+  const root = repo();
+  ready(root);
+  defaultOpencode(root);
+  const execution = asyncRun(root, "early-session", "dispatch", "cancel-buy");
+  const t = await until(root, (t) => t.run?.conversationId);
+  assert.equal(t.run.state, "running");
+  assert.equal(t.run.conversationId, "ses-early-fixture-session");
+  const ended = await execution.result;
+  assert.equal(ended.status, 1);
+  assert.equal(JSON.parse(ended.stdout).conversationId, "ses-early-fixture-session");
+  const resumed = success(await asyncRun(root, "early-resume", "resume", "cancel-buy").result);
+  assert.equal(resumed.conversationId, "ses-early-fixture-session");
+  assert.equal(resumed.sessionSource, "startup-log");
+  const fallback = repo();
+  ready(fallback);
+  defaultOpencode(fallback);
+  const r = await asyncRun(fallback, "unknown-log", "dispatch", "cancel-buy").result;
+  const result = JSON.parse(r.stdout);
+  assert.equal(r.status, 0);
+  assert.equal(result.conversationId, "ses-fixture-session");
+  // opencode 的会话日志就是标准输出本身，最终事件行同样被扫描器认出，不存在回退路径。
+  assert.equal(result.sessionSource, "startup-log");
+  assert.equal(result.sessionWarning, undefined);
+});
+
+test("opencode 停在计划确认时按回复文本分类，续跑后交付", async () => {
+  const root = repo();
+  ready(root);
+  defaultOpencode(root);
+  const stopped = JSON.parse((await asyncRun(root, "plan-stop", "dispatch", "cancel-buy").result).stdout);
+  assert.equal(stopped.endReason, "needs_approval");
+  const log = join(root, "research/local/task-control/cancel-buy/notify.log");
+  assert.match(readFileSync(log, "utf8"), /needs_approval/);
+  const resumed = success(await asyncRun(root, "complete", "resume", "cancel-buy").result);
+  assert.equal(resumed.state, "completed");
+  assert.equal(resumed.endReason, "delivered");
+  assert.match(readFileSync(log, "utf8"), /delivered/);
+});
+
+test("任务可用 execution.executor 指定 opencode；agy 档位字段被拒绝", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  opencodeConfig(root);
+  editTask(root, (s) => {
+    s.execution = { executor: "opencode" };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "task executor");
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.equal(preview.executor, "opencode");
+  assert.match(preview.prompt, /--owner opencode/);
+  const done = success(await asyncRun(root, "complete", "dispatch", "cancel-buy").result);
+  assert.equal(done.executor, "opencode");
+  assert.equal(done.conversationId, "ses-fixture-session");
+
+  const conflict = repo();
+  ready(conflict);
+  executorConfig(conflict);
+  opencodeConfig(conflict);
+  editTask(conflict, (s) => {
+    s.execution = { executor: "opencode", effort: "high" };
+  });
+  git(conflict, "add", ".");
+  git(conflict, "commit", "-m", "conflict");
+  const rejected = run(conflict, "dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /effort\/mode 覆盖/);
+});
+
+test("dispatch --model 覆盖冻结进快照，换模型须重新确认", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run", "--model", "cli-model"));
+  assert.equal(preview.model, "cli-model");
+  assert.equal(existsSync(join(root, "research/local/task-control/cancel-buy")), false, "dry-run 不落快照");
+  success(detachedScenario(root, "fail", "dispatch", "cancel-buy", "--model", "cli-model"));
+  const done = await finished(root);
+  assert.equal(done.run.state, "failed");
+  const snapshot = JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8"));
+  assert.equal(snapshot.config.executors.agy.model, "cli-model");
+  const again = run(root, "dispatch", "cancel-buy", "--model", "other-model");
+  assert.notEqual(again.status, 0);
+  assert.match(again.stderr, /refresh-definition/);
+  const wt = join(root, ".worktrees/cancel-buy");
+  success(
+    detachedScenario(
+      wt,
+      "complete",
+      "resume",
+      "cancel-buy",
+      "--conversation",
+      "fixture-session",
+      "--refresh-definition",
+      "--model",
+      "other-model",
+    ),
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).config.executors.agy.model,
+    "other-model",
+  );
+  assert.equal((await finished(root)).run.state, "completed");
+});
+
+test("执行器建树前失败，主仓 dispatch --refresh-definition 可换模型重派；已建树时缺树明确报错", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  success(detachedScenario(root, "fail-before-start", "dispatch", "cancel-buy", "--model", "cli-model"));
+  assert.equal((await finished(root)).run.state, "failed");
+  assert.equal(existsSync(join(root, ".worktrees/cancel-buy")), false, "执行器未建树");
+  const control = join(root, "research/local/task-control/cancel-buy");
+  const original = readFileSync(join(control, "definition.json"), "utf8");
+  editTask(root, (s) => {
+    s.branch = "task/other";
+  });
+  git(root, "commit", "-am", "rename branch");
+  const renamed = run(root, "dispatch", "cancel-buy", "--refresh-definition", "--model", "other-model");
+  assert.notEqual(renamed.status, 0);
+  assert.match(renamed.stderr, /不能更换任务分支或工作树/);
+  git(root, "revert", "--no-edit", "HEAD");
+  success(detachedScenario(root, "complete", "dispatch", "cancel-buy", "--refresh-definition", "--model", "other-model"));
+  assert.equal(JSON.parse(readFileSync(join(control, "definition.json"), "utf8")).config.executors.agy.model, "other-model");
+  const archived = readdirSync(join(control, "definitions"));
+  assert.equal(archived.length, 1, "旧快照归档");
+  assert.equal(readFileSync(join(control, "definitions", archived[0]), "utf8"), original, "归档保留原始字节");
+  assert.equal((await finished(root)).run.state, "completed");
+
+  const gone = repo();
+  ready(gone);
+  executorConfig(gone);
+  success(detachedScenario(gone, "fail", "dispatch", "cancel-buy"));
+  assert.equal((await finished(gone)).run.state, "failed");
+  rmSync(join(gone, ".worktrees/cancel-buy"), { recursive: true, force: true });
+  git(gone, "worktree", "prune");
+  const rejected = run(gone, "dispatch", "cancel-buy", "--refresh-definition", "--model", "other-model");
+  assert.notEqual(rejected.status, 0);
+  assert.doesNotMatch(rejected.stderr, /ENOENT/);
+  assert.match(rejected.stderr, /原任务工作树/);
+});
+
+test("包内 task.config.example.json 原样拷入即可通过配置解析", () => {
+  const root = repo();
+  const example = JSON.parse(readFileSync(new URL("../packages/devflow/templates/task.config.example.json", import.meta.url), "utf8"));
+  configure(root, (cfg) => {
+    for (const key of Object.keys(cfg)) delete cfg[key];
+    Object.assign(cfg, example.task, { controlDir: "research/local/task-control" });
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "example config");
+  success(run(root, "status"));
+});
+
+test("旧 task.agy 配置段按单执行器等价读取", async () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    delete cfg.executor;
+    delete cfg.executors;
+    cfg.agy = {
+      command: [process.execPath, executor],
+      model: "legacy-model",
+      effort: "medium",
+      mode: "accept-edits",
+      permissionArgs: [],
+    };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "legacy config");
+  assert.equal(success(run(root, "status")).tasks[0].status, "待认领");
+  const done = success(await asyncRun(root, "complete", "dispatch", "cancel-buy").result);
+  assert.equal(done.executor, "agy");
+  assert.equal(done.conversationId, "fixture-session");
+});
+
+test("任务级 execution.model 覆盖冻结进快照", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  editTask(root, (s) => {
+    s.execution = { model: "task-model" };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "task model");
+  assert.equal(success(run(root, "dispatch", "cancel-buy", "--dry-run")).model, "task-model");
+  success(detachedScenario(root, "fail", "dispatch", "cancel-buy"));
+  await finished(root);
+  assert.equal(
+    JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).config.executors.agy.model,
+    "task-model",
+  );
+});
+
+test("0.7.0 旧形状快照：配置不变时直接续跑，--model 给出重新确认提示", async () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    delete cfg.executor;
+    delete cfg.executors;
+    delete cfg.executorEnvDeny;
+    cfg.agy = { command: [process.execPath, executor], model: "legacy-model", effort: "medium", mode: "accept-edits", permissionArgs: [] };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "legacy config");
+  success(detachedScenario(root, "fail", "dispatch", "cancel-buy"));
+  await finished(root);
+  // Rewrite the snapshot exactly as kit 0.7.0 froze it: parsed config with a top-level agy section.
+  const file = join(root, "research/local/task-control/cancel-buy/definition.json"),
+    snap = JSON.parse(readFileSync(file, "utf8")),
+    c = snap.config;
+  snap.config = {
+    version: 1,
+    tasksDir: c.tasksDir,
+    controlDir: c.controlDir,
+    rules: c.rules,
+    agy: c.executors.agy,
+    worktreeDir: c.worktreeDir,
+    postCreate: c.postCreate,
+    budgetMinutes: c.budgetMinutes,
+    progressMinutes: c.progressMinutes,
+    hardTimeoutMinutes: c.hardTimeoutMinutes,
+  };
+  snap.configHash = cryptoHash("sha256").update(JSON.stringify(snap.config)).digest("hex");
+  writeFileSync(file, JSON.stringify(snap));
+  const model = run(root, "resume", "cancel-buy", "--conversation", "fixture-session", "--model", "other-model");
+  assert.notEqual(model.status, 0);
+  assert.doesNotMatch(model.stderr, /TypeError|Cannot read/);
+  assert.match(model.stderr, /refresh-definition/);
+  success(detachedScenario(root, "complete", "resume", "cancel-buy", "--conversation", "fixture-session"));
+  assert.equal((await finished(root)).run.state, "completed");
+});
+
+test("配置换新形状后，旧快照在工作树内重新确认可继续", async () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    delete cfg.executor;
+    delete cfg.executors;
+    cfg.agy = {
+      command: [process.execPath, executor],
+      model: "legacy-model",
+      effort: "medium",
+      mode: "accept-edits",
+      permissionArgs: [],
+    };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "legacy config");
+  success(detachedScenario(root, "fail", "dispatch", "cancel-buy"));
+  await finished(root);
+  configure(root, (cfg) => {
+    delete cfg.agy;
+    cfg.executor = "agy";
+    cfg.executors = {
+      agy: {
+        command: [process.execPath, executor],
+        model: "legacy-model",
+        effort: "medium",
+        mode: "accept-edits",
+        permissionArgs: [],
+      },
+    };
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "new config shape");
+  assert.match(run(root, "resume", "cancel-buy", "--conversation", "fixture-session").stderr, /后端配置已变化|项目配置已变化/);
+  const wt = join(root, ".worktrees/cancel-buy");
+  const resumed = success(
+    await asyncRun(wt, "complete", "resume", "cancel-buy", "--conversation", "fixture-session", "--refresh-definition").result,
+  );
+  assert.equal(resumed.state, "completed");
+});
+
+test("opencode 坏输出与缺会话不能冒充成功", async () => {
+  for (const scenario of ["invalid", "missing-session"]) {
+    const root = repo();
+    ready(root);
+    defaultOpencode(root);
+    success(detachedScenario(root, scenario, "dispatch", "cancel-buy"));
+    const done = await finished(root);
+    assert.equal(done.run.state, "failed");
+    assert.match(done.run.error, /JSON|会话标识|回复文本/);
+  }
+});
+
+test("执行器配置错误有清晰报错：未知名称、缺失模型、形状不符、默认段缺失", () => {
+  for (const [mutation, message] of [
+    [
+      (cfg) => {
+        cfg.executor = "missing";
+      },
+      /默认执行器 missing 缺少配置段/,
+    ],
+    [
+      (cfg) => {
+        cfg.executors.mystery = { command: ["x"], model: "a/b", permissionArgs: [] };
+      },
+      /未知执行器：mystery/,
+    ],
+    [
+      (cfg) => {
+        cfg.executors.opencode = { command: ["opencode"], permissionArgs: [] };
+      },
+      /opencode\.model/,
+    ],
+    [
+      (cfg) => {
+        cfg.executors.opencode = {
+          command: ["opencode"],
+          model: "no-slash",
+          permissionArgs: [],
+        };
+      },
+      /厂商\/模型/,
+    ],
+    [
+      (cfg) => {
+        delete cfg.executors.agy;
+      },
+      /默认执行器 agy 缺少配置段/,
+    ],
+  ]) {
+    const root = repo();
+    configure(root, mutation);
+    const result = run(root, "status");
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, message);
+  }
 });

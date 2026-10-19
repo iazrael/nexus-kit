@@ -1,15 +1,17 @@
 import { parseArgs } from "node:util";
 import { newTask, check, idOf } from "./definition.ts";
 import { context, start, status, dispatch, resume, supervise, verify, accept, rework, shortStatus } from "./runtime.ts";
+import { watchCommand } from "./watch.ts";
 import { text } from "./validation.ts";
 const usage =
-  "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
+  "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework|watch> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览；--model 覆盖本次执行器模型（已有快照需 --refresh-definition）。\nwatch <任务标识...> | --all 轮询运行记录，任务结束打印一行摘要后退出；调用方用后台工具等它退出来唤醒会话。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
 export async function taskCommand(argv: string[]): Promise<number> {
   let [sub, ...args] = argv;
   if (sub === "--help" || sub === "-h") {
     args = ["--help"];
     sub = "help";
   }
+  if (sub === "watch") return watchCommand(args);
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
@@ -19,6 +21,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
       help: { type: "boolean", short: "h" },
       "dry-run": { type: "boolean" },
       detach: { type: "boolean" },
+      model: { type: "string" },
       short: { type: "boolean" },
       conversation: { type: "string" },
       "run-dir": { type: "string" },
@@ -36,8 +39,8 @@ export async function taskCommand(argv: string[]): Promise<number> {
     new: ["title"],
     start: ["owner"],
     status: ["short"],
-    dispatch: ["dry-run", "detach", "refresh-definition"],
-    resume: ["conversation", "detach", "refresh-definition"],
+    dispatch: ["dry-run", "detach", "model", "refresh-definition"],
+    resume: ["conversation", "detach", "model", "refresh-definition"],
     verify: ["main-review"],
     accept: ["review"],
     rework: ["message-file"],
@@ -70,6 +73,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
         dryRun: values["dry-run"],
         refreshDefinition: values["refresh-definition"],
         detach: values.detach,
+        model: values.model,
       });
       break;
     case "resume":
@@ -77,6 +81,7 @@ export async function taskCommand(argv: string[]): Promise<number> {
         conversation: values.conversation,
         refreshDefinition: values["refresh-definition"],
         detach: values.detach,
+        model: values.model,
       });
       break;
     case "verify":

@@ -6,6 +6,13 @@
 ## [Unreleased]
 
 - 修复：worktree rm 在调用方当前目录位于待删工作树内时拒绝执行并提示先 cd 回主仓库，不再删掉调用方 shell 的工作目录导致后续命令全部 spawn ENOENT。
+- 新增：task 执行器接口。配置从 task.agy 单段改为 task.executor（默认执行器名）加 task.executors（每个执行器的启动命令、必填模型与权限参数），内置 agy 与 opencode 双适配器；只写旧 task.agy 段的配置按单执行器等价读取；0.7.0 冻结的派发快照在宿主 nexus.config.json 不改动时直接加载与续跑。任务 execution 段可覆盖执行器与模型，dispatch/resume 加 `--model`（已有快照换模型须同时 `--refresh-definition`；执行器在 task start 建树前就失败、任务分支尚不存在时，可在主仓 `dispatch --refresh-definition --model` 重新确认后重派）。
+- 新增：每次运行收尾写结束分类 endReason（delivered/blocked/interrupted/needs_approval/failed）并追加一行到该任务控制目录下的 notify.log（`<controlDir>/<任务标识>/notify.log`）；`task status` 在进程状态后显示分类。needs_approval 识别“退出码 0 却停在计划确认”的运行，只是给协调者的诊断提示，不改写真实退出码、不授予任何权限。结束流水写入失败保留诊断不改变收尾。
+- 新增：`nexus-devflow task watch <任务标识...> | --all` 观察器，轮询运行记录，任务结束打印一行摘要后退出，供调用方后台工具等待唤醒会话；监督进程已退出而记录停在运行中时按中断结束；取消观察不终止执行器。
+- 变更：dispatch/resume 等待结束后返回的 result 字段由 agy 原始 JSON（conversation_id、status、response 等）改为执行器单据 `{ conversationId, response }`；读取 result.conversation_id 或 result.status 的调用方改读 conversationId。
+- 新增：任务配置可选 deletable 删除授权。可写白名单只授权新增和修改，删除基准已有文件须逐个列入 deletable，否则验证报“删除未授权”；重命名按删除旧路径处理。未声明 deletable 的旧任务定义，字段与定义指纹保持不变。
+- 新增：task.executorEnvDeny 配置（字符串数组，默认空），启动执行器前逐个剔除这些环境变量，协调者 shell 中的授权不再被执行器继承。
+- 变更：派发与续跑提示词写明派发即批准任务文件列出的计划与范围，执行者记录步骤后继续实施、不结束回合等待重复批准；`task new` 生成的模板增加背景与证据、已批准计划与授权、输入与操作步骤、验收清单、交付物与失败处理五节。
 
 ## [0.7.0] - 2026-10-15
 

@@ -33,7 +33,8 @@ export function readSnapshot(file, root) {
         fields(r, ["path", "sha256"]);
         sha(r.sha256, "rule.sha256", 64);
     }
-    return o;
+    // Snapshots frozen by 0.7.0 carry the legacy agy-only config; callers always see the executors shape.
+    return { ...o, config: cfg };
 }
 export function readRun(file) {
     const o = object(json(file), "运行记录");
@@ -42,6 +43,8 @@ export function readRun(file) {
     nullablePid(o.supervisorPid, "supervisorPid");
     nullablePid(o.executorPid, "executorPid");
     nullableText(o.conversationId, "conversationId");
+    if (o.endReason !== undefined && o.endReason !== null)
+        check(["delivered", "blocked", "interrupted", "needs_approval", "failed"].includes(text(o.endReason, "endReason")), "未知结束分类");
     for (const key of [
         "sessionSource",
         "sessionWarning",
@@ -49,6 +52,7 @@ export function readRun(file) {
         "budgetMessage",
         "lastHead",
         "error",
+        "executor",
         "outputError",
         "recordError",
         "reportedConversationId",
@@ -56,6 +60,9 @@ export function readRun(file) {
         "taskStatus",
         "mainWarning",
         "baseWarning",
+        "endMessage",
+        "notificationError",
+        "classificationError",
     ])
         if (o[key] !== undefined)
             text(o[key], key);

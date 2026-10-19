@@ -14,15 +14,22 @@ export declare function status(ctx: TaskContext, id?: string): {
 export declare function shortStatus(result: {
     tasks: TaskStatus[];
 }): string;
+/** A record still marked running whose supervisor is gone reads as interrupted; the file itself is left untouched. */
+export declare function settleRun(info: RunInfo): RunInfo;
 export declare function dispatch(ctx: TaskContext, id: string, options?: RunOptions): Promise<LaunchResult | {
     runDir: string;
     waitingCancelled: boolean;
     commandExitCode: number;
+    endReason?: "delivered" | "blocked" | "interrupted" | "needs_approval" | "failed" | null;
+    endMessage?: string;
+    notificationError?: string;
+    classificationError?: string;
     id: string;
     state: string;
     startedAt: string;
     supervisorPid: number | null;
     executorPid: number | null;
+    executor?: string;
     conversationId: string | null;
     resume: boolean;
     sourceRoot: string;
@@ -47,16 +54,19 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     mainWarning?: string;
     baseWarning?: string;
 } | {
-    result?: {
-        conversation_id: string;
-    };
+    result?: import("./types.ts").ExecutorReceipt;
     runDir: string;
     commandExitCode: number;
+    endReason?: "delivered" | "blocked" | "interrupted" | "needs_approval" | "failed" | null;
+    endMessage?: string;
+    notificationError?: string;
+    classificationError?: string;
     id: string;
     state: string;
     startedAt: string;
     supervisorPid: number | null;
     executorPid: number | null;
+    executor?: string;
     conversationId: string | null;
     resume: boolean;
     sourceRoot: string;
@@ -86,16 +96,23 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     base: string;
     prompt: string;
     dryRun: boolean;
+    executor: string;
+    model: string;
 }>;
 export declare function resume(ctx: TaskContext, id: string, options?: RunOptions): Promise<LaunchResult | {
     runDir: string;
     waitingCancelled: boolean;
     commandExitCode: number;
+    endReason?: "delivered" | "blocked" | "interrupted" | "needs_approval" | "failed" | null;
+    endMessage?: string;
+    notificationError?: string;
+    classificationError?: string;
     id: string;
     state: string;
     startedAt: string;
     supervisorPid: number | null;
     executorPid: number | null;
+    executor?: string;
     conversationId: string | null;
     resume: boolean;
     sourceRoot: string;
@@ -120,16 +137,19 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     mainWarning?: string;
     baseWarning?: string;
 } | {
-    result?: {
-        conversation_id: string;
-    };
+    result?: import("./types.ts").ExecutorReceipt;
     runDir: string;
     commandExitCode: number;
+    endReason?: "delivered" | "blocked" | "interrupted" | "needs_approval" | "failed" | null;
+    endMessage?: string;
+    notificationError?: string;
+    classificationError?: string;
     id: string;
     state: string;
     startedAt: string;
     supervisorPid: number | null;
     executorPid: number | null;
+    executor?: string;
     conversationId: string | null;
     resume: boolean;
     sourceRoot: string;

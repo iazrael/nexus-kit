@@ -1,5 +1,6 @@
 import { check, text, command, number, safePath, json, object, stringList, maxSeconds } from "./validation.js";
 import { parseTaskConfig, validateTaskPaths, taskWorktreeName, efforts, modes, minutes } from "./config.js";
+import { executorByName } from "./executor.js";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { relative, dirname } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -66,7 +67,7 @@ export function newTask(root, cfg, id, title) {
         verify: [],
         productReviewRequired: false,
     };
-    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 任务配置\n\n目标、范围、输入、白名单和验证命令在下面填写；空目标或空验证不能派发。模型与预算未指定时使用项目配置。命令是 argv 数组，不经过 shell。验证命令中的 {output} 是工具预先创建的空目录，探针必须接受空目录，不限定父目录，拒绝复用非空旧目录。探索任务可以登记尚未实现的探针，由执行者实现后交付；派发前确定命令接口和通过标准，不预设研究结论。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 执行记录\n\n每阶段登记命令、结果、失败和提交。\n\n## 中断恢复\n\n登记现场路径、最后失败命令和下一步。\n\n## 交付与验收记录\n\n执行者只标待验收；协调者独立验证后填写通过。\n`;
+    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 任务配置\n\n目标、范围、输入、白名单和验证命令在下面填写；空目标或空验证不能派发。模型与预算未指定时使用项目配置。命令是 argv 数组，不经过 shell。验证命令中的 {output} 是工具预先创建的空目录，探针必须接受空目录，不限定父目录，拒绝复用非空旧目录。探索任务可以登记尚未实现的探针，由执行者实现后交付；派发前确定命令接口和通过标准，不预设研究结论。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 背景与证据\n\n协调者填写：为什么要做、谁依赖结果、现有错误是什么。已证事实逐条列出文件位置、复现命令与证据路径；待验证猜测单列，不得把猜测写成事实。\n\n## 已批准计划与授权\n\n协调者填写已批准的计划、可写白名单和禁改范围。可写白名单只授权新增和修改；删除基准里已有的文件，要把路径逐个列入任务配置 deletable。派发仅批准本任务明确列出的范围。执行者把范围内实施步骤记入执行记录后继续，不再等待重复批准；扩范围、变更验收目标或新增未授权动作必须交回协调者。\n\n## 输入与操作步骤\n\n协调者列出输入位置、来源、指纹、起始状态和所需环境。按顺序写明复现问题、检查证据、实施、验证与交付的具体操作。命令要能直接执行，输出使用新目录；缺输入立即标受阻，不自行补猜。\n\n## 验收清单\n\n每项填写：编号、操作或命令、预期结果、证据文件和字段、负例、同机制兄弟场景、不通过时的处理。不得只写“测试通过”或“已完成”。结果允许推翻原猜测，但证据和断言必须对得上；验收要求不能预设结论。\n\n## 交付物与失败处理\n\n列出探针、机器结果、报告、截图及日志的准确路径和下游读取方式。失败保留命令、退出码、输出、现场与下一步；同方法三次失败后停止重复并标受阻。执行者逐项核对验收清单，只标待验收；协调者独立复跑、审查、验收后单独合入。\n\n\n## 执行记录\n\n每阶段登记命令、结果、失败和提交。\n\n## 中断恢复\n\n登记现场路径、最后失败命令和下一步。\n\n## 交付与验收记录\n\n执行者只标待验收；协调者独立验证后填写通过。\n`;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, content, { flag: "wx" });
     return { task: relative(root, file), id, status: "待认领" };
@@ -94,9 +95,19 @@ export function readTask(root, cfg, id, complete = true) {
     check(states.includes(header(content, "状态")), "非法任务状态");
     // parseSpec has already validated every execution field.
     const effective = structuredClone(cfg);
-    const { model, effort, mode, ...timing } = spec.execution ?? {};
+    const { executor, model, effort, mode, ...timing } = spec.execution ?? {};
     Object.assign(effective, timing);
-    Object.assign(effective.agy, { ...(model && { model }), ...(effort && { effort }), ...(mode && { mode }) });
+    const name = executor ?? effective.executor;
+    const settings = structuredClone(effective.executors[name]);
+    check(settings !== undefined, `未知执行器：${name}`);
+    if (effort !== undefined || mode !== undefined) {
+        check("effort" in settings, `执行器 ${name} 不支持 effort/mode 覆盖`);
+        Object.assign(settings, { ...(effort !== undefined && { effort }), ...(mode !== undefined && { mode }) });
+    }
+    if (model !== undefined)
+        settings.model = model;
+    effective.executor = name;
+    effective.executors[name] = settings;
     return { spec, content, status: header(content, "状态"), definition: sha(JSON.stringify(spec)), effective };
 }
 export function parseSpec(raw, root, cfg, id) {
@@ -112,6 +123,13 @@ export function parseSpec(raw, root, cfg, id) {
         check(!p.startsWith(".worktrees") && !p.startsWith(cfg.controlDir), `禁止写入：${p}`);
     });
     check(writable.includes(`${cfg.tasksDir}/${id}.md`), "白名单必须包含自己的任务文件");
+    const deletable = s.deletable === undefined ? undefined : stringList(s.deletable, "deletable");
+    deletable?.forEach((p) => {
+        safePath(root, p);
+        check(!p.startsWith(".worktrees") && !p.startsWith(cfg.controlDir), `禁止删除：${p}`);
+        check(p !== `${cfg.tasksDir}/${id}.md`, "不能删除自己的任务文件");
+    });
+    check(!deletable || new Set(deletable).size === deletable.length, "deletable 有重复路径");
     check(Array.isArray(s.inputs), "inputs 必须是数组");
     const inputs = s.inputs.map((value) => {
         const v = object(value, "input");
@@ -148,6 +166,8 @@ export function parseSpec(raw, root, cfg, id) {
         goal: typeof s.goal === "string" ? s.goal : "",
         scope: typeof s.scope === "string" ? s.scope : "",
         writable,
+        // Only present when declared, so definitions written before this field keep their fingerprint.
+        ...(deletable === undefined ? {} : { deletable }),
         inputs,
         dependencies,
         verify,
@@ -161,6 +181,12 @@ export function parseSpec(raw, root, cfg, id) {
                 execution[k] = minutes(v, k);
             else if (k === "model" || k === "mode" || k === "effort")
                 execution[k] = text(v, k);
+            else if (k === "executor") {
+                const name = text(v, k);
+                executorByName(name);
+                check(name in cfg.executors, `execution.executor ${name} 缺少项目配置段`);
+                execution.executor = name;
+            }
             else
                 throw new Error(`未知 execution 字段：${k}`);
         }
