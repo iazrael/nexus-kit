@@ -1,6 +1,6 @@
 import { recordRunEnd } from "./run-end.js";
 import { git, atomic } from "./io.js";
-import { loadNexusConfig } from "../config.js";
+import { loadNexusConfig, loadNexusConfigAt } from "../config.js";
 import { worktreeNew } from "../worktree.js";
 import { systemProcessProbe } from "../worktree-procs.js";
 import { legacyTaskConfig, taskWorktree } from "./config.js";
@@ -203,6 +203,7 @@ export function start(ctx, id, owner) {
         const created = worktreeNew({
             cwd: snap.sourceRoot,
             config: { ...ctx.backend, dir: snap.config.worktreeDir, share: [], postCreate: snap.config.postCreate },
+            loadConfig: (dir) => loadNexusConfigAt(dir).worktree,
             procs: systemProcessProbe(),
             log: (message) => process.stderr.write(`[task] ${message}\n`),
             run: (cmd, args, cwd) => {

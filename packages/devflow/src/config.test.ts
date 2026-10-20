@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_PRIVATE_REQUIRED, DEFAULT_RELEASE_STEPS, loadNexusConfig, parseNexusConfig } from "./config.ts";
+import { DEFAULT_PRIVATE_REQUIRED, DEFAULT_RELEASE_STEPS, loadNexusConfig, loadNexusConfigAt, parseNexusConfig } from "./config.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -173,5 +173,19 @@ describe("loadNexusConfig", () => {
     expect(() => loadNexusConfig("/", {})).toThrow(/找不到/);
     writeFileSync(join(root, "nexus.config.json"), "{bad");
     expect(() => loadNexusConfig(root, {})).toThrow(/不是合法 JSON/);
+  });
+});
+
+describe("loadNexusConfigAt", () => {
+  it("只读指定目录：该目录没有配置时报错，不向上借用上级目录的配置", () => {
+    const root = mkdtempSync(join(tmpdir(), "nexus-cfg-"));
+    dirs.push(root);
+    writeFileSync(join(root, "nexus.config.json"), JSON.stringify({ worktree: { postMerge: [["parent"]] } }));
+    mkdirSync(join(root, "repo"));
+    expect(() => loadNexusConfigAt(join(root, "repo"), {})).toThrow(/repo\/nexus\.config\.json 不存在/);
+    writeFileSync(join(root, "repo/nexus.config.json"), JSON.stringify({ worktree: { postMerge: [["own"]] } }));
+    expect(loadNexusConfigAt(join(root, "repo"), {}).worktree.postMerge).toEqual([["own"]]);
+    writeFileSync(join(root, "repo/nexus.config.json"), "{bad");
+    expect(() => loadNexusConfigAt(join(root, "repo"), {})).toThrow(/不是合法 JSON/);
   });
 });

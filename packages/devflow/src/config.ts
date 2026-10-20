@@ -248,19 +248,27 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
 }
 
 /** 从 cwd 向上找 nexus.config.json；找不到抛错 */
+function readConfigFile(dir: string, env: NodeJS.ProcessEnv): NexusConfig {
+  const file = join(dir, CONFIG_FILE);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`[nexus.config] ${file} 不是合法 JSON：${String(error).slice(0, 120)}`, { cause: error });
+  }
+  return parseNexusConfig(raw, dir, env);
+}
+
+/** 只读 dir 下的配置，不向上查找：合入后重读主仓库配置时，不能借用上级目录里别的项目的配置 */
+export function loadNexusConfigAt(dir: string, env: NodeJS.ProcessEnv = process.env): NexusConfig {
+  if (!existsSync(join(dir, CONFIG_FILE))) throw new Error(`[nexus.config] ${join(dir, CONFIG_FILE)} 不存在`);
+  return readConfigFile(dir, env);
+}
+
 export function loadNexusConfig(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): NexusConfig {
   let dir = resolve(cwd);
   for (;;) {
-    const file = join(dir, CONFIG_FILE);
-    if (existsSync(file)) {
-      let raw: unknown;
-      try {
-        raw = JSON.parse(readFileSync(file, "utf8"));
-      } catch (error) {
-        throw new Error(`[nexus.config] ${file} 不是合法 JSON：${String(error).slice(0, 120)}`, { cause: error });
-      }
-      return parseNexusConfig(raw, dir, env);
-    }
+    if (existsSync(join(dir, CONFIG_FILE))) return readConfigFile(dir, env);
     const parent = resolve(dir, "..");
     if (parent === dir) throw new Error(`[nexus.config] 从 ${cwd} 向上找不到 ${CONFIG_FILE}`);
     dir = parent;

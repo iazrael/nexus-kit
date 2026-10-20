@@ -108,9 +108,16 @@ function harness(over: Partial<WorktreeConfig> = {}, failOn: (line: string) => b
     ...over,
   };
   const procs = fakeProcs();
+  // 主仓库里有 nexus.config.json 时按它重读（合入后命令要用合入后的配置）；没有就沿用本次配置
+  const loadConfig = (dir: string): WorktreeConfig => {
+    const file = join(dir, "nexus.config.json");
+    if (!existsSync(file)) return config;
+    return { ...config, ...parseNexusConfig(JSON.parse(readFileSync(file, "utf8")), dir).worktree };
+  };
   const env = (cwd = repo.main): WorktreeEnv => ({
     cwd,
     config,
+    loadConfig,
     log: (m) => void logs.push(m),
     procs,
     run: (cmd, args, at) => {
@@ -278,6 +285,27 @@ describe("worktree merge", () => {
     expect(git(h.main, "rev-list", "--merges", "main")).toBe("");
     expect(h.runs.at(-1)).toEqual({ line: "verify", cwd: h.main });
     expect(worktreeMerge(h.env(), "feat/x")).toBe("up-to-date");
+  });
+
+  it("合入改了 postMerge：快进后按合入后的配置执行新命令", () => {
+    const h = harness();
+    const { root } = worktreeNew(h.env(), { branch: "cfg" });
+    writeFileSync(join(root, "nexus.config.json"), JSON.stringify({ worktree: { postMerge: [["verify-new"]] } }));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "改合入后命令");
+    worktreeMerge(h.env(), "cfg");
+    expect(h.runs.at(-1)).toEqual({ line: "verify-new", cwd: h.main });
+    expect(h.runs.map((r) => r.line)).not.toContain("verify");
+  });
+
+  it("合入后重读配置失败：报已合入且读配置失败，不回退旧命令", () => {
+    const h = harness();
+    const { root } = worktreeNew(h.env(), { branch: "badcfg" });
+    writeFileSync(join(root, "nexus.config.json"), "{坏的 JSON");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "坏配置");
+    expect(() => worktreeMerge(h.env(), "badcfg")).toThrow(/已合入 main.*重新读取.*nexus\.config/s);
+    expect(h.runs.map((r) => r.line)).not.toContain("verify");
   });
 
   it("分叉拒绝：主干不动、主仓库干净，提示回工作树变基", () => {

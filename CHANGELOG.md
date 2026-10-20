@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+- 修复：worktree merge 快进后重读主仓库的 nexus.config.json，按合入后的配置执行 postMerge（原来用合入前读到的配置，合入改了 postMerge 时会跑旧命令）；重读失败直接报错，不回退旧命令。
+
 - 新增：`worktree.isolatable` 配置（缺省等于 `share`），isolate 与建树 `--isolate` 只接受其中的项，只读的档案、原料留在 share 里但不可隔离。
 - 修复：isolate 复制只展开最顶层软链，源目录内部的软链会原样指回主仓库或仓库外，本树写入漏回原处。现在复制前遍历源目录，有任何软链即拒绝并列出路径与指向（`--empty` 不复制不检查）。
 

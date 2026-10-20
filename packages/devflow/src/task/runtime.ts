@@ -16,7 +16,7 @@ import type {
   AcceptanceStatus,
 } from "./types.ts";
 import type { ChildProcess } from "node:child_process";
-import { loadNexusConfig } from "../config.ts";
+import { loadNexusConfig, loadNexusConfigAt } from "../config.ts";
 import { worktreeNew } from "../worktree.ts";
 import { systemProcessProbe } from "../worktree-procs.ts";
 import { legacyTaskConfig, taskWorktree } from "./config.ts";
@@ -278,6 +278,7 @@ export function start(ctx: TaskContext, id: string, owner: string) {
       {
         cwd: snap.sourceRoot,
         config: { ...ctx.backend, dir: snap.config.worktreeDir, share: [], postCreate: snap.config.postCreate },
+        loadConfig: (dir) => loadNexusConfigAt(dir).worktree,
         procs: systemProcessProbe(),
         log: (message) => process.stderr.write(`[task] ${message}\n`),
         run: (cmd, args, cwd) => {

@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { changelogGate } from "./check-changelog.ts";
-import { loadNexusConfig } from "./config.ts";
+import { loadNexusConfig, loadNexusConfigAt } from "./config.ts";
 import { auditDocs } from "./docs-audit.ts";
 import { installHooks, outdatedHooks } from "./hooks.ts";
 
@@ -81,6 +81,7 @@ async function worktreeCmd(argv: string[]): Promise<number> {
   const env = {
     cwd: process.cwd(),
     config: loadNexusConfig().worktree,
+    loadConfig: (dir: string) => loadNexusConfigAt(dir).worktree,
     log: (m: string) => (hookMode ? console.error(m) : console.log(m)),
     procs: systemProcessProbe(),
     run: runToStderr,

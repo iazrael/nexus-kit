@@ -428,7 +428,16 @@ export function worktreeMerge(env, arg) {
             return mode;
         }
         env.log(`[worktree] 已快进合入 ${branch}：${base} 前移，无合并节点`);
-        for (const [cmd, ...args] of env.config.postMerge) {
+        // 合入可能改了 postMerge（比如删掉旧脚本、换成新命令）：按合入后的配置执行，验证的才是合进来的代码
+        let postMerge;
+        try {
+            postMerge = env.loadConfig(layout.mainRoot).postMerge;
+        }
+        catch (error) {
+            throw new Error(`[worktree] ✖ ${branch} 已合入 ${base}，但重新读取主仓库 nexus.config.json 失败，合入后验证没有执行：` +
+                `${error instanceof Error ? error.message : String(error)}——修好配置（修复同样走工作树合回）后在主仓库手动跑合入后命令`, { cause: error });
+        }
+        for (const [cmd, ...args] of postMerge) {
             const line = [cmd, ...args].join(" ");
             env.log(`[worktree] 合入后验证：${line}`);
             try {

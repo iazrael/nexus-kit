@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { changelogGate } from "./check-changelog.js";
-import { loadNexusConfig } from "./config.js";
+import { loadNexusConfig, loadNexusConfigAt } from "./config.js";
 import { auditDocs } from "./docs-audit.js";
 import { installHooks, outdatedHooks } from "./hooks.js";
 function git(args, cwd) {
@@ -78,6 +78,7 @@ async function worktreeCmd(argv) {
     const env = {
         cwd: process.cwd(),
         config: loadNexusConfig().worktree,
+        loadConfig: (dir) => loadNexusConfigAt(dir).worktree,
         log: (m) => (hookMode ? console.error(m) : console.log(m)),
         procs: systemProcessProbe(),
         run: runToStderr,

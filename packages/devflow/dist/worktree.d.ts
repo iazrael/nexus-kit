@@ -18,6 +18,8 @@ export interface WorktreeEnv {
     /** 调用方所在目录（主仓库或任一工作树内） */
     cwd: string;
     config: WorktreeConfig;
+    /** 从目录向上读 nexus.config.json 的工作树段；合入后用它重读主仓库配置，合入可能改了 postMerge */
+    loadConfig(dir: string): WorktreeConfig;
     log(message: string): void;
     procs: ProcessProbe;
     /** 执行命令（输出不进 stdout，钩子模式下 stdout 只许输出路径）；非零退出抛错 */
