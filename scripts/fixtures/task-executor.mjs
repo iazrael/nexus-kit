@@ -71,6 +71,18 @@ if (scenario === "unknown-log") {
       "Created conversation not-a-uuid\nGetConversationDetail: found conversation 5da7df16-fef9-4055-a94d-a39363b6eeac\n",
     );
 }
+if (scenario === "oc-quota" || scenario === "oc-error-noise") {
+  // Real opencode 2.0 output when the provider rejects the turn (captured 2026-10-20).
+  const error = (type, message) =>
+    console.log(JSON.stringify({ type: "error", timestamp: Date.now(), sessionID: ocFresh, error: { type, message, status: 429 } }));
+  console.log(JSON.stringify({ type: "step_start", timestamp: Date.now(), sessionID: ocFresh, part: { type: "step-start" } }));
+  if (scenario === "oc-error-noise") error("tool.failed", "第一条报错\u001b[31m" + "x".repeat(600));
+  error(
+    "provider.quota",
+    scenario === "oc-error-noise" ? "末条\u0007\u001b[31m😀" + "y".repeat(600) : "Rate limit exceeded. Please try again later.",
+  );
+  process.exit(1);
+}
 if (scenario === "invalid") {
   console.log("not-json");
   process.exit(0);

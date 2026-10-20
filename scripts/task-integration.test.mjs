@@ -2254,6 +2254,36 @@ test("dispatch --model 覆盖冻结进快照，换模型须重新确认", async 
   assert.equal((await finished(root)).run.state, "completed");
 });
 
+test("opencode 失败时把最后一条报错事件接进 error，限流给出换模型提示；成功运行不附带", async () => {
+  const root = repo();
+  ready(root);
+  defaultOpencode(root);
+  success(detachedScenario(root, "oc-quota", "dispatch", "cancel-buy"));
+  const quota = (await finished(root)).run;
+  assert.equal(quota.state, "failed");
+  assert.equal(quota.endReason, "failed");
+  assert.equal(quota.exitCode, 1);
+  assert.match(quota.error, /^执行器退出码 1，信号 无；执行器最后一条报错 provider\.quota：Rate limit exceeded/);
+  assert.match(quota.error, /task dispatch cancel-buy --refresh-definition --model <模型>/);
+  const notify = readFileSync(join(root, "research/local/task-control/cancel-buy/notify.log"), "utf8");
+  assert.match(notify, /provider\.quota/);
+
+  const noisy = repo();
+  ready(noisy);
+  defaultOpencode(noisy);
+  success(detachedScenario(noisy, "oc-error-noise", "dispatch", "cancel-buy"));
+  const last = (await finished(noisy)).run;
+  assert.doesNotMatch(last.error, /第一条报错|tool\.failed/, "只取最后一条");
+  assert.ok(![...last.error].some((c) => c.codePointAt(0) < 32), "控制字符清洗");
+  assert.ok(last.error.length < 500, "外部文本截断");
+
+  const ok = repo();
+  ready(ok);
+  defaultOpencode(ok);
+  success(await asyncRun(ok, "complete", "dispatch", "cancel-buy").result);
+  assert.equal((await finished(ok)).run.error, undefined);
+});
+
 test("执行器建树前失败，主仓 dispatch --refresh-definition 可换模型重派；已建树时缺树明确报错", async () => {
   const root = repo();
   ready(root);

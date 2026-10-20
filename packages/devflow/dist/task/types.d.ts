@@ -16,6 +16,11 @@ export interface ExecutorLaunch {
     /** File the session scanner polls while the executor runs. */
     sessionLog: string;
 }
+/** An executor's own error report, e.g. opencode `{"type":"provider.quota","message":"Rate limit exceeded"}`. */
+export interface ExecutorFailure {
+    type: string;
+    message: string;
+}
 export interface ExecutorReceipt {
     conversationId: string;
     response?: string;
@@ -26,9 +31,11 @@ export interface Executor {
     invocation(settings: ExecutorSettings, conversationId: string | null, runDir: string, stdoutPath: string, prompt: string): ExecutorLaunch;
     sessionScanner(launch: ExecutorLaunch, expected: string | null): () => string | null;
     receipt(stdoutPath: string): ExecutorReceipt;
+    /** failure is the executor's own last error report, if its output carries one. */
     salvage(stdoutPath: string): {
         conversationId?: string;
         response?: string;
+        failure?: ExecutorFailure;
     };
 }
 export interface TaskConfig {

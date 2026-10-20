@@ -426,6 +426,14 @@ function noRunning(ctx, id) {
     const info = runInfo(ctx, id);
     check(!info || (!["starting", "running"].includes(info.state) && !groupAlive(info.executorPid)), "任务正在运行，拒绝重复派发、续跑或验收");
 }
+/** The executor's last reported error, sanitized and capped; it may not be the root cause. */
+function executorFailureNote(id, failure) {
+    const chars = Array.from(printable(`${failure.type}：${failure.message}`).trim());
+    const note = `；执行器最后一条报错 ${chars.length > 300 ? `${chars.slice(0, 300).join("")}…` : chars.join("")}`;
+    return failure.type === "provider.quota"
+        ? `${note}；等额度恢复或换模型：已建树在任务树执行 task resume ${id} --refresh-definition --model <模型>，建树前失败在主仓执行 task dispatch ${id} --refresh-definition --model <模型>`
+        : note;
+}
 function promptFor(ctx, snap, resume) {
     const id = snap.spec.id;
     return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，先核对本次派发已批准的任务范围；范围内直接续跑，不要重复等待同一批准。" : "执行已分配的独立任务。协调者派发表示已批准任务文件明确列出的计划与范围。"}\n把范围内的实施步骤写入任务执行记录后继续实施，不要结束回合等待重复批准。需要扩展范围、改变验收目标或新增未授权动作时，保存证据并交回协调者，不能借派发扩大授权。\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n先阅读任务与公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task start ${id} --owner ${snap.config.executor}，自建或恢复工作树。工具启动目录为 ${snap.sourceRoot}。\n建树后只在指定树内白名单操作，不修改主仓或其他工作树；输入副本由 start 按指纹准备。\n目标：${snap.spec.goal}\n范围：${snap.spec.scope}\n每阶段更新同一任务并提交，保留失败命令、输出、现场和下一步。返工时以任务文件最新返工要求为准，逐项核对缺陷、复现命令和通过标准。先阅读背景、输入来源、禁改范围和逐项验收清单；不确定的事实用证据验证，缺少输入或标准时明确标受阻，不自行编造结论。只标待验收，不自行通过、合入、推送或发布。\n预算 ${snap.config.budgetMinutes} 分钟为进度检查节点，不删除现场；同方法三次失败保存证据并标受阻。\n最终回复给交付 SHA、复现命令、实际结果和未验证范围。`;
@@ -739,6 +747,10 @@ export async function supervise(ctx, id, directory) {
                         info.conversationId = salvaged.conversationId;
                 }
                 endResponse = salvaged.response;
+                // Only a non-zero exit gets the executor's own report: exit-0 failures keep their exact
+                // message, which the plan-stop classification matches on.
+                if (salvaged.failure && typeof info.exitCode === "number" && info.exitCode !== 0)
+                    info.error += executorFailureNote(id, salvaged.failure);
             }
             catch (salvageError) {
                 info.outputError = errorMessage(salvageError);

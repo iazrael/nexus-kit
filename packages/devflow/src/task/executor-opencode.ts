@@ -1,4 +1,4 @@
-import type { Executor, ExecutorLaunch, ExecutorReceipt, OpencodeSettings } from "./types.ts";
+import type { Executor, ExecutorFailure, ExecutorLaunch, ExecutorReceipt, OpencodeSettings } from "./types.ts";
 import { check, command, errorCode, object, stringList, text } from "./validation.ts";
 import { sessionLineScanner } from "./scan.ts";
 import { closeSync, lstatSync, openSync, readSync } from "node:fs";
@@ -17,6 +17,7 @@ export function parseOpencodeSettings(value: unknown): OpencodeSettings {
 interface OutputFacts {
   conversationId?: string;
   response?: string;
+  failure?: ExecutorFailure;
 }
 
 /** Only whole-line JSON events count; the session id must sit on the event itself. */
@@ -54,6 +55,22 @@ function eventText(line: string): string | null {
   return null;
 }
 
+/** `{"type":"error","error":{"type":"provider.quota","message":"..."}}` — opencode's own failure report. */
+function eventFailure(line: string): ExecutorFailure | null {
+  if (!line.startsWith("{")) return null;
+  try {
+    const event: unknown = JSON.parse(line);
+    if (typeof event !== "object" || event === null || (event as Record<string, unknown>).type !== "error") return null;
+    const error = (event as Record<string, unknown>).error;
+    if (typeof error !== "object" || error === null) return null;
+    const { type, message } = error as Record<string, unknown>;
+    return { type: typeof type === "string" ? type : "unknown", message: typeof message === "string" ? message : "" };
+  } catch {
+    // 非整行 JSON 的行不是执行器事件。
+  }
+  return null;
+}
+
 // Long runs stream their whole transcript; beyond this cap only the tail is
 // read, which always contains the final reply.
 const maxReceiptBytes = 33_554_432;
@@ -81,16 +98,19 @@ function readOutputTail(stdoutPath: string): string {
 function parseOutput(stdoutPath: string): OutputFacts {
   const sessionIds: string[] = [];
   const texts: string[] = [];
+  let failure: OutputFacts["failure"];
   for (const line of readOutputTail(stdoutPath).split("\n")) {
     const trimmed = line.trim();
     const session = eventSession(trimmed);
     if (session) sessionIds.push(session);
     const text = eventText(trimmed);
     if (text) texts.push(text);
+    failure = eventFailure(trimmed) ?? failure;
   }
   return {
     ...(sessionIds.length ? { conversationId: sessionIds[sessionIds.length - 1] } : {}),
     ...(texts.length ? { response: texts.join("\n") } : {}),
+    ...(failure ? { failure } : {}),
   };
 }
 

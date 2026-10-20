@@ -48,6 +48,25 @@ function eventText(line) {
     }
     return null;
 }
+/** `{"type":"error","error":{"type":"provider.quota","message":"..."}}` — opencode's own failure report. */
+function eventFailure(line) {
+    if (!line.startsWith("{"))
+        return null;
+    try {
+        const event = JSON.parse(line);
+        if (typeof event !== "object" || event === null || event.type !== "error")
+            return null;
+        const error = event.error;
+        if (typeof error !== "object" || error === null)
+            return null;
+        const { type, message } = error;
+        return { type: typeof type === "string" ? type : "unknown", message: typeof message === "string" ? message : "" };
+    }
+    catch {
+        // 非整行 JSON 的行不是执行器事件。
+    }
+    return null;
+}
 // Long runs stream their whole transcript; beyond this cap only the tail is
 // read, which always contains the final reply.
 const maxReceiptBytes = 33_554_432;
@@ -76,6 +95,7 @@ function readOutputTail(stdoutPath) {
 function parseOutput(stdoutPath) {
     const sessionIds = [];
     const texts = [];
+    let failure;
     for (const line of readOutputTail(stdoutPath).split("\n")) {
         const trimmed = line.trim();
         const session = eventSession(trimmed);
@@ -84,10 +104,12 @@ function parseOutput(stdoutPath) {
         const text = eventText(trimmed);
         if (text)
             texts.push(text);
+        failure = eventFailure(trimmed) ?? failure;
     }
     return {
         ...(sessionIds.length ? { conversationId: sessionIds[sessionIds.length - 1] } : {}),
         ...(texts.length ? { response: texts.join("\n") } : {}),
+        ...(failure ? { failure } : {}),
     };
 }
 export const opencodeExecutor = {
