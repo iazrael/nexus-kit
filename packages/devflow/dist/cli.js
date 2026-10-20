@@ -227,7 +227,7 @@ async function main(cmd) {
             const outdated = outdatedHooks(cfg.repoRoot);
             if (outdated.length > 0) {
                 console.warn(`[hooks] ⚠ ${outdated.join("、")} 与当前 kit 版本的内容不同，未覆盖（可能是宿主改过或旧版 kit 装的）——` +
-                    "手动对比 @nexus-kit/devflow 的 hooks 导出（PRE_COMMIT / REFERENCE_TRANSACTION）合并进去，否则新逻辑（如发版锁）不生效");
+                    "手动对比 @nexus-kit/devflow 的 hooks 导出（PRE_COMMIT / REFERENCE_TRANSACTION）合并进去，否则 kit 的新逻辑不生效（如发版锁、pre-commit 先找项目依赖再找 PATH 的命令查找）");
             }
             return 0;
         }

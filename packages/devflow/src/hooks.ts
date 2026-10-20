@@ -9,9 +9,17 @@ import { RELEASE_LOCK, TOKEN_ENV } from "./release.ts";
 
 export const HOOKS_DIR = ".githooks";
 
+/**
+ * 先用项目依赖里钉住的版本（模板生成的项目），没有再用 PATH 上的全局命令（走 PATH 的存量项目）。
+ * git 在工作树根目录执行 pre-commit，所以相对路径 node_modules/.bin 指的是本树的依赖。
+ */
 export const PRE_COMMIT = `#!/bin/sh
 # CHANGELOG precommit 门禁（@nexus-kit/devflow）。纯重构/文档/测试可 git commit --no-verify 跳过。
-exec npx --no-install nexus-devflow check-changelog
+# 先用项目依赖里的 nexus-devflow，没有再用 PATH 上的全局命令。
+if [ -x node_modules/.bin/nexus-devflow ]; then exec node_modules/.bin/nexus-devflow check-changelog; fi
+if command -v nexus-devflow >/dev/null 2>&1; then exec nexus-devflow check-changelog; fi
+echo "[pre-commit] 找不到 nexus-devflow：项目依赖里没有，PATH 上也没有。在 nexus-kit 执行 pnpm install-cli 安装全局命令" >&2
+exit 1
 `;
 
 /**

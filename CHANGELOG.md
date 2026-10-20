@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+- 修复：install-hooks 写入的 pre-commit 不再用 `npx --no-install`（只认 node_modules，走 PATH 的项目会被拦下每次提交）；改为先找 `node_modules/.bin/nexus-devflow`，没有再用 PATH 上的 `nexus-devflow`，都没有时提示 `pnpm install-cli` 并非零退出。已装旧钩子的宿主（被旧钩子拦住提交时只看到 npx 的报错）：重跑 `nexus-devflow install-hooks`，它会把旧 pre-commit 报为过期，按提示用 `PRE_COMMIT` 导出替换。
+
 ## [0.8.0] - 2026-10-20
 
 - 新增：kit 根目录 `pnpm install-cli`，建立或修复 `nexus-devflow` 全局命令：软链永远指向 kit 主仓库的 `packages/devflow/dist/cli.js`（在工作树里执行也一样），默认放 `~/.local/bin`（`--bin-dir` 可改）；同名软链替换、普通文件拒绝；目录不在 PATH 或被同名命令遮住时打印处理办法并非零退出；最后自检 `nexus-devflow --help`。
