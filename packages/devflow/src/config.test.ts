@@ -55,6 +55,7 @@ describe("parseNexusConfig", () => {
       portBase: 4173,
       portStep: 10,
       share: ["apps/web/.build-number"],
+      isolatable: ["apps/web/.build-number"],
       disposable: [],
       postCreate: [["pnpm", "install", "--frozen-lockfile"]],
       // 合入可能改了锁文件（工作树里加了依赖）：先按锁文件装依赖再构建，否则主仓库验证会找不到新依赖
@@ -91,6 +92,7 @@ describe("parseNexusConfig", () => {
       portBase: 5000,
       portStep: 2,
       share: ["research", ".build-number"],
+      isolatable: ["research", ".build-number"],
       disposable: ["public/sound"],
       postCreate: [],
       postMerge: [
@@ -98,6 +100,17 @@ describe("parseNexusConfig", () => {
         ["pnpm", "build"],
       ],
     });
+  });
+
+  it("isolatable 缺省等于 share；显式时只能是 share 的子集，尾斜杠规整", () => {
+    const wt = parseNexusConfig(
+      { worktree: { share: ["research", "assets/raw", "public/atlas"], isolatable: ["public/atlas/"] } },
+      "/repo",
+    ).worktree;
+    expect(wt.isolatable).toEqual(["public/atlas"]);
+    expect(() => parseNexusConfig({ worktree: { share: ["research"], isolatable: ["public/atlas"] } }, "/repo")).toThrow(
+      /worktree\.isolatable 的 public\/atlas 不在 worktree\.share 里/,
+    );
   });
 
   it("发版段缺省值与显式值", () => {

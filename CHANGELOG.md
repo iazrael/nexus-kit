@@ -5,6 +5,9 @@
 
 ## [Unreleased]
 
+- 新增：`worktree.isolatable` 配置（缺省等于 `share`），isolate 与建树 `--isolate` 只接受其中的项，只读的档案、原料留在 share 里但不可隔离。
+- 修复：isolate 复制只展开最顶层软链，源目录内部的软链会原样指回主仓库或仓库外，本树写入漏回原处。现在复制前遍历源目录，有任何软链即拒绝并列出路径与指向（`--empty` 不复制不检查）。
+
 - 修复：install-hooks 写入的 pre-commit 不再用 `npx --no-install`（只认 node_modules，走 PATH 的项目会被拦下每次提交）；改为先找 `node_modules/.bin/nexus-devflow`，没有再用 PATH 上的 `nexus-devflow`，都没有时提示 `pnpm install-cli` 并非零退出。已装旧钩子的宿主（被旧钩子拦住提交时只看到 npx 的报错）：重跑 `nexus-devflow install-hooks`，它会把旧 pre-commit 报为过期，按提示用 `PRE_COMMIT` 导出替换。
 
 ## [0.8.0] - 2026-10-20

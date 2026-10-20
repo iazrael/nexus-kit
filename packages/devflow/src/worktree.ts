@@ -35,7 +35,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { WorktreeConfig } from "./config.ts";
 import { pidAlive, sleepMs } from "./worktree-procs.ts";
 import {
@@ -238,11 +238,37 @@ export interface NewOptions {
   isolate?: readonly string[];
 }
 
-function assertShareNames(config: WorktreeConfig, names: readonly string[]): void {
-  const unknown = names.filter((n) => !config.share.includes(n.replace(/\/+$/, "")));
+/** 隔离名单校验：必须是共享项，且登记在 worktree.isolatable（只读原料、档案不登记，防误复制大目录） */
+function assertIsolatable(config: WorktreeConfig, names: readonly string[]): void {
+  const unknown = names.filter((n) => !config.share.includes(n));
   if (unknown.length > 0) {
-    throw new Error(`[worktree] 未知共享项：${unknown.join(",")}；可选 ${config.share.join(",") || "（worktree.share 为空）"}`);
+    throw new Error(`[worktree] 未知共享项：${unknown.join(",")}；共享项有 ${config.share.join(",") || "（worktree.share 为空）"}`);
   }
+  const fixed = names.filter((n) => !config.isolatable.includes(n));
+  if (fixed.length > 0) {
+    throw new Error(
+      `[worktree] ${fixed.join(",")} 不可隔离：不在 worktree.isolatable 里（只读共享项，隔离会把整个目录复制进工作树）；` +
+        `可选 ${config.isolatable.join(",") || "（无）"}`,
+    );
+  }
+}
+
+/**
+ * 复制前列出共享源目录里的全部软链。cpSync 的 dereference 只展开最顶层（Node 26 实测），内部软链原样复制并改写成
+ * 绝对路径，仍指回主仓库或仓库外：本树写进去会漏回原处，隔离不成立。所以源目录里有任何软链都拒绝复制。
+ * 软链本身不再往下走（Dirent.isDirectory() 对软链为 false），循环软链也不会让遍历打转。
+ */
+function nestedLinks(dir: string, mainRoot: string): string[] {
+  const found: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isSymbolicLink()) found.push(`${relative(mainRoot, path)} → ${readlinkSync(path)}`);
+      else if (entry.isDirectory()) walk(path);
+    }
+  };
+  walk(dir);
+  return found;
 }
 
 /** 建树 + 挂软链 + 登记端口 + postCreate；返回工作树根与端口。任一步失败整体回滚 */
@@ -250,7 +276,7 @@ export function worktreeNew(env: WorktreeEnv, opts: NewOptions): { root: string;
   if (opts.branch === "" || opts.branch.startsWith("-")) throw new Error(`[worktree] 非法分支名：${opts.branch}`);
   if (opts.from?.startsWith("-") === true) throw new Error(`[worktree] 非法起点：${opts.from}`);
   const isolate = (opts.isolate ?? []).map((n) => n.replace(/\/+$/, ""));
-  assertShareNames(env.config, isolate);
+  assertIsolatable(env.config, isolate);
   const layout = layoutOf(env);
   const root = resolve(layout.worktreesDir, basename(opts.branch));
   if (existsSync(root)) throw new Error(`[worktree] 目标已存在：${root}`);
@@ -363,7 +389,7 @@ function buildCodeGraph(env: WorktreeEnv, layout: Layout, root: string): void {
  */
 export function worktreeIsolate(env: WorktreeEnv, names: readonly string[], empty: boolean): void {
   const rels = names.map((n) => n.replace(/\/+$/, ""));
-  assertShareNames(env.config, rels);
+  assertIsolatable(env.config, rels);
   const layout = layoutOf(env);
   const root = realpathSync(git(env.cwd, "rev-parse", "--show-toplevel"));
   if (root === layout.mainRoot) throw new Error("[worktree] isolate 只能在工作树里执行");
@@ -377,6 +403,15 @@ export function worktreeIsolate(env: WorktreeEnv, names: readonly string[], empt
       const target = readlinkSync(path);
       if (resolve(dirname(path), target) !== expected || !statOrNull(expected)?.isDirectory()) {
         throw new Error(`[worktree] ${rel} 不是指向主仓库目录的共享软链（${target}），无法隔离`);
+      }
+      if (!empty) {
+        const links = nestedLinks(expected, layout.mainRoot);
+        if (links.length > 0) {
+          throw new Error(
+            `[worktree] ${rel} 的主仓库源目录里有软链，复制后它们仍指向原处，本树写入会漏回主仓库或仓库外，拒绝隔离：\n  ` +
+              `${links.join("\n  ")}\n处理掉这些软链，或改用 --empty 留空目录由本树重新生成`,
+          );
+        }
       }
       pending.push({ path, target: expected });
     } else if (st === null) {

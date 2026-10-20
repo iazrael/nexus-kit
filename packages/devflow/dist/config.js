@@ -135,12 +135,19 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
     const portBase = posInt(wt, "portBase", "worktree", 4173);
     if (portBase > 65_000)
         throw new Error("[nexus.config] worktree.portBase 必须小于 65000");
+    const share = relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]);
+    const isolatable = relPathList(wt, "isolatable", "worktree", share);
+    for (const p of isolatable) {
+        if (!share.includes(p))
+            throw new Error(`[nexus.config] worktree.isolatable 的 ${p} 不在 worktree.share 里——只能隔离共享项`);
+    }
     const worktree = {
         dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
         base,
         portBase,
         portStep: posInt(wt, "portStep", "worktree", 10),
-        share: relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]),
+        share,
+        isolatable,
         disposable: relPathList(wt, "disposable", "worktree", []),
         postCreate: commandList(wt, "postCreate", "worktree", [["pnpm", "install", "--frozen-lockfile"]], true),
         // 合入可能改了锁文件（工作树里加了依赖）：先按锁文件装依赖，否则主仓库的验证找不到新依赖

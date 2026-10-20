@@ -15,6 +15,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -213,7 +214,57 @@ describe("worktree isolate", () => {
     const { root } = worktreeNew(h.env(), { branch: "iso" });
     expect(() => worktreeIsolate(h.env(), ["research"], false)).toThrow(/只能在工作树/);
     expect(() => worktreeIsolate(h.env(root), [".build-number"], false)).toThrow(/无法隔离/);
-    expect(() => worktreeIsolate(h.env(root), ["x"], false)).toThrow(/未知共享项/);
+    expect(() => worktreeIsolate(h.env(root), ["x"], false)).toThrow(/未知共享项：x；共享项有 \.build-number,research/);
+  });
+});
+
+describe("worktree isolate 的防线", () => {
+  it("在 share 里但不在 isolatable 的项（只读原料、档案）拒绝隔离，建树 --isolate 同样拒绝", () => {
+    const h = harness({ isolatable: [".build-number"] });
+    const { root } = worktreeNew(h.env(), { branch: "ro" });
+    expect(() => worktreeIsolate(h.env(root), ["research"], false)).toThrow(/research 不可隔离.*worktree\.isolatable/);
+    expect(lstatSync(join(root, "research")).isSymbolicLink()).toBe(true);
+    expect(() => worktreeNew(h.env(), { branch: "ro2", isolate: ["research"] })).toThrow(/research 不可隔离/);
+    expect(existsSync(join(h.wtDir, "ro2"))).toBe(false);
+  });
+
+  it("源目录里有任何软链（仓外、断链、仓内）都拒绝复制并列出路径：复制只展开顶层，内部软链会原样指回去", () => {
+    const h = harness();
+    const outside = join(h.base, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "big.bin"), "外部内容\n");
+    mkdirSync(join(h.main, "temp"));
+    symlinkSync(outside, join(h.main, "research/ext"));
+    symlinkSync(join(h.base, "gone"), join(h.main, "research/dangling"));
+    mkdirSync(join(h.main, "research/sub"));
+    symlinkSync(join(h.main, "temp"), join(h.main, "research/sub/inside"));
+    symlinkSync("loop-b", join(h.main, "research/loop-a"));
+    symlinkSync("loop-a", join(h.main, "research/loop-b"));
+    const { root } = worktreeNew(h.env(), { branch: "ext" });
+    let message = "";
+    try {
+      worktreeIsolate(h.env(root), ["research"], false);
+    } catch (error) {
+      message = String(error);
+    }
+    for (const p of ["research/ext", "research/dangling", "research/sub/inside", "research/loop-a", "research/loop-b"]) {
+      expect(message).toContain(p);
+    }
+    expect(lstatSync(join(root, "research")).isSymbolicLink()).toBe(true);
+    expect(readdirSync(root).filter((n) => n.startsWith(".isolate-"))).toEqual([]);
+    worktreeIsolate(h.env(root), ["research"], true);
+    expect(readdirSync(join(root, "research"))).toEqual([]);
+  });
+
+  it("源目录没有软链时复制出的是真文件，本树写入不影响主仓库", () => {
+    const h = harness();
+    mkdirSync(join(h.main, "research/sub"));
+    writeFileSync(join(h.main, "research/sub/x.txt"), "主仓\n");
+    const { root } = worktreeNew(h.env(), { branch: "in" });
+    worktreeIsolate(h.env(root), ["research"], false);
+    expect(lstatSync(join(root, "research/sub")).isSymbolicLink()).toBe(false);
+    writeFileSync(join(root, "research/sub/x.txt"), "本树\n");
+    expect(readFileSync(join(h.main, "research/sub/x.txt"), "utf8")).toBe("主仓\n");
   });
 });
 

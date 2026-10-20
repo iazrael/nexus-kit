@@ -40,8 +40,10 @@ export interface WorktreeConfig {
   /** 主仓库的预览端口；工作树从 portBase + portStep 起按 portStep 分配 */
   portBase: number;
   portStep: number;
-  /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根），也是 isolate 可选的名字 */
+  /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根） */
   share: string[];
+  /** share 里允许隔离成本树副本的项（isolate 与建树 --isolate 的可选名字），缺省等于 share；只读原料不列进来 */
+  isolatable: string[];
   /** 回收时视为可再生的额外被忽略路径（相对仓库根，按路径段前缀） */
   disposable: string[];
   /** 建树后在新工作树里依次执行的命令（argv 数组） */
@@ -189,12 +191,18 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
   if (!/^[\w./-]+$/.test(base) || base.startsWith("-")) throw new Error("[nexus.config] worktree.base 不是合法分支名");
   const portBase = posInt(wt, "portBase", "worktree", 4173);
   if (portBase > 65_000) throw new Error("[nexus.config] worktree.portBase 必须小于 65000");
+  const share = relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]);
+  const isolatable = relPathList(wt, "isolatable", "worktree", share);
+  for (const p of isolatable) {
+    if (!share.includes(p)) throw new Error(`[nexus.config] worktree.isolatable 的 ${p} 不在 worktree.share 里——只能隔离共享项`);
+  }
   const worktree: WorktreeConfig = {
     dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
     base,
     portBase,
     portStep: posInt(wt, "portStep", "worktree", 10),
-    share: relPathList(wt, "share", "worktree", [join(appRoot, ".build-number")]),
+    share,
+    isolatable,
     disposable: relPathList(wt, "disposable", "worktree", []),
     postCreate: commandList(wt, "postCreate", "worktree", [["pnpm", "install", "--frozen-lockfile"]], true),
     // 合入可能改了锁文件（工作树里加了依赖）：先按锁文件装依赖，否则主仓库的验证找不到新依赖

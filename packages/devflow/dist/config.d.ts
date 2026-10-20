@@ -27,8 +27,10 @@ export interface WorktreeConfig {
     /** 主仓库的预览端口；工作树从 portBase + portStep 起按 portStep 分配 */
     portBase: number;
     portStep: number;
-    /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根），也是 isolate 可选的名字 */
+    /** 不入 git、建树时软链回主仓库共享的路径（相对仓库根） */
     share: string[];
+    /** share 里允许隔离成本树副本的项（isolate 与建树 --isolate 的可选名字），缺省等于 share；只读原料不列进来 */
+    isolatable: string[];
     /** 回收时视为可再生的额外被忽略路径（相对仓库根，按路径段前缀） */
     disposable: string[];
     /** 建树后在新工作树里依次执行的命令（argv 数组） */
