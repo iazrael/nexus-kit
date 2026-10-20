@@ -1,6 +1,6 @@
 {
   "name": "@nexus-kit/pwa-react",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "PWA 的 React 绑定：usePwaUpdate（快照订阅 + 带重入闸的确认升级）、useInstallPrompt（安装引导）",
   "type": "module",
   "sideEffects": false,
