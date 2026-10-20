@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-20
+
 - 新增：kit 根目录 `pnpm install-cli`，建立或修复 `nexus-devflow` 全局命令：软链永远指向 kit 主仓库的 `packages/devflow/dist/cli.js`（在工作树里执行也一样），默认放 `~/.local/bin`（`--bin-dir` 可改）；同名软链替换、普通文件拒绝；目录不在 PATH 或被同名命令遮住时打印处理办法并非零退出；最后自检 `nexus-devflow --help`。
 - 修复：`nexus-devflow --help` 打印用法后以 0 退出，不再按未知子命令报错退出 2。
 - 修复：worktree rm 在调用方当前目录位于待删工作树内时拒绝执行并提示先 cd 回主仓库，不再删掉调用方 shell 的工作目录导致后续命令全部 spawn ENOENT。
@@ -12,7 +14,7 @@
 - 新增：opencode 以非零退出码失败时，运行记录的 error 追加执行器最后一条报错事件（类型与原文，清洗控制字符并截断）；限流（provider.quota）另附换模型重派的命令提示。task status、task watch 与 notify.log 随之可见。
 - 新增：每次运行收尾写结束分类 endReason（delivered/blocked/interrupted/needs_approval/failed）并追加一行到该任务控制目录下的 notify.log（`<controlDir>/<任务标识>/notify.log`）；`task status` 在进程状态后显示分类。needs_approval 识别“退出码 0 却停在计划确认”的运行，只是给协调者的诊断提示，不改写真实退出码、不授予任何权限。结束流水写入失败保留诊断不改变收尾。
 - 新增：`nexus-devflow task watch <任务标识...> | --all` 观察器，轮询运行记录，任务结束打印一行摘要后退出，供调用方后台工具等待唤醒会话；监督进程已退出而记录停在运行中时按中断结束；取消观察不终止执行器。
-- 变更：dispatch/resume 等待结束后返回的 result 字段由 agy 原始 JSON（conversation_id、status、response 等）改为执行器单据 `{ conversationId, response }`；读取 result.conversation_id 或 result.status 的调用方改读 conversationId。
+- 破坏性：dispatch/resume 等待结束后返回的 result 字段由 agy 原始 JSON（conversation_id、status、response 等）改为执行器单据 `{ conversationId, response }`。迁移：读取 result.conversation_id 的调用方改读 result.conversationId；result.status 不再提供，成功与否看外层 state 与 commandExitCode。
 - 新增：任务配置可选 deletable 删除授权。可写白名单只授权新增和修改，删除基准已有文件须逐个列入 deletable，否则验证报“删除未授权”；重命名按删除旧路径处理。未声明 deletable 的旧任务定义，字段与定义指纹保持不变。
 - 新增：task.executorEnvDeny 配置（字符串数组，默认空），启动执行器前逐个剔除这些环境变量，协调者 shell 中的授权不再被执行器继承。
 - 变更：派发与续跑提示词写明派发即批准任务文件列出的计划与范围，执行者记录步骤后继续实施、不结束回合等待重复批准；`task new` 生成的模板增加背景与证据、已批准计划与授权、输入与操作步骤、验收清单、交付物与失败处理五节。
