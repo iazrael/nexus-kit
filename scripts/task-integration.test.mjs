@@ -80,6 +80,12 @@ test("new 生成可编辑任务，重复名称不覆盖原件", () => {
   const original = readFileSync(taskPath(root), "utf8");
   assert.match(original, /取消购买核验/);
   assert.match(original, /> 状态：待认领/);
+  const sections = [...original.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  assert.equal(sections[0], "一页摘要");
+  assert.ok(sections.indexOf("任务配置") < sections.indexOf("执行记录"));
+  assert.equal(sections.at(-1), "交付与验收记录");
+  assert.match(original, /## 交付与验收记录[\s\S]*交付摘要/);
+  assert.doesNotMatch(original, /协调者填写/);
   const repeat = run(root, "new", "cancel-buy", "--title", "覆盖");
   assert.notEqual(repeat.status, 0);
   assert.match(repeat.stderr, /已存在/);
@@ -2052,6 +2058,12 @@ test("本地实践：派发写清已批准范围，续跑不再停在同一计�
   assert.match(preview.prompt, /已批准.*范围/);
   assert.match(preview.prompt, /不要结束回合等待.*批准/);
   assert.match(preview.prompt, /扩.*范围/);
+  assert.match(preview.prompt, /标待验收前.*交付与验收记录.*交付摘要/);
+  assert.match(preview.prompt, /最终回复.*交付 SHA.*交付摘要/);
+  assert.doesNotMatch(preview.prompt, /仅取消路径/);
+  const rules = readFileSync(fileURLToPath(new URL("../packages/devflow/templates/任务协作规则.md", import.meta.url)), "utf8");
+  assert.match(rules, /交付摘要[\s\S]*改了什么[\s\S]*验证如何[\s\S]*还有什么/);
+  assert.doesNotMatch(rules, /协调者独立复跑/);
   const stopped = await asyncRun(root, "plan-stop", "dispatch", "cancel-buy").result;
   assert.equal(stopped.status, 1);
   assert.match(run(root, "status", "cancel-buy", "--short").stdout, /needs_approval/);
