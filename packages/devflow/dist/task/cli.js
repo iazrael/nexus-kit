@@ -3,7 +3,7 @@ import { newTask, check, idOf } from "./definition.js";
 import { context, start, status, dispatch, resume, supervise, verify, accept, rework, shortStatus } from "./runtime.js";
 import { watchCommand } from "./watch.js";
 import { text } from "./validation.js";
-const usage = "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework|watch> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览；--model 覆盖本次执行器模型（已有快照需 --refresh-definition）。\nwatch <任务标识...> | --all 轮询运行记录，任务结束打印一行摘要后退出；调用方用后台工具等它退出来唤醒会话。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
+const usage = "用法：nexus-devflow task <new|dispatch|start|status|resume|verify|accept|rework|watch> [任务标识]\ndispatch/resume 默认等待最终结果；--detach 只启动；--dry-run 仅派发预览；--model 覆盖本次执行器模型（已有快照需 --refresh-definition）。\nwatch <任务标识...> | --all 轮询运行记录，任务结束打印一行摘要后退出；协调者在当前回合前台运行并加 --timeout-minutes（小于宿主单条命令上限），退出 3 表示未结束、再跑一轮，watch 退出前不结束回复。\nstatus --short 输出一行一个任务；rework --message-file <JSON> 登记缺陷、复现命令与通过标准。\nverify --main-review <JSON> 登记主仓异常核对（reviewer、reason、incidents[{id,sha256}]）。\n取消等待保留执行器；执行完成仍需 verify、独立审查和 accept。";
 export async function taskCommand(argv) {
     let [sub, ...args] = argv;
     if (sub === "--help" || sub === "-h") {

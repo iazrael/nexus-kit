@@ -6,7 +6,7 @@ import { context, settleRun } from "./runtime.js";
 import { idOf } from "./definition.js";
 import { readRun, readRunPointer } from "./records.js";
 import { check, safePath, errorMessage, maxMinutes, printable } from "./validation.js";
-const usage = "用法：task watch <任务标识...> | --all [--timeout-minutes 45] [--poll-ms 5000]\n观察器退出后由调用方后台工具唤醒会话；取消观察不会终止执行器。";
+const usage = "用法：task watch <任务标识...> | --all [--timeout-minutes 45] [--poll-ms 5000]\n协调者在当前回合前台运行，--timeout-minutes 取小于宿主单条命令上限的值（如 9）；退出 0 全部结束，退出 3 观察超时、再跑一轮。\n宿主一轮结束后不保证唤醒会话，也不保证保留后台进程；取消观察不会终止执行器。";
 function line(id, sample) {
     if (!sample)
         return `${id}: 未产生运行记录`;
