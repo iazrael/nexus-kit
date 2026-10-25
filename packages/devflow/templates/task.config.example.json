@@ -22,6 +22,7 @@
     "executorEnvDeny": [],
     "worktreeDir": ".worktrees",
     "postCreate": [],
+    "preflight": [],
     "budgetMinutes": 40,
     "progressMinutes": 10,
     "hardTimeoutMinutes": 0

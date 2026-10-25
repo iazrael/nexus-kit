@@ -1,4 +1,5 @@
 import { recordRunEnd } from "./run-end.js";
+import { readNote, indentNote, formatSummary, checkAcceptance, clearSelfChecks } from "./deliver.js";
 import { git, atomic } from "./io.js";
 import { loadNexusConfig, loadNexusConfigAt } from "../config.js";
 import { worktreeNew } from "../worktree.js";
@@ -9,7 +10,7 @@ import { errorMessage, errorCode, printable, checkFingerprint } from "./validati
 import { readSnapshot, readRun, readVerification, readAccepted, readReview, readPointer, readRunPointer, readRework } from "./records.js";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { executorByName } from "./executor.js";
-import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, cpSync, openSync, closeSync, chmodSync, lstatSync, copyFileSync, constants, } from "node:fs";
+import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync, rmSync, cpSync, openSync, closeSync, chmodSync, lstatSync, copyFileSync, constants, } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, config, safePath, readTask, taskFile, header, setHeader, record, sha, fingerprint, nonce, text, inside, } from "./definition.js";
@@ -151,19 +152,50 @@ function commitTask(ctx, snap, wt, content, message) {
     git(wt, "add", "--", rel);
     git(wt, "commit", "-m", message, "--", rel);
 }
+/** Removes a lock whose recorded holder has exited; locks without a holder record are left for the operator. */
+function reclaimStaleLock(path) {
+    const holder = join(path, "pid");
+    if (!existsSync(holder))
+        return false;
+    const recorded = readFileSync(holder, "utf8").trim(), pid = Number(recorded);
+    if (!Number.isInteger(pid) || pid <= 0 || alive(pid))
+        return false;
+    const grave = `${path}.stale-${process.pid}-${Date.now()}`;
+    try {
+        renameSync(path, grave);
+    }
+    catch (e) {
+        if (errorCode(e) === "ENOENT")
+            return false;
+        throw e;
+    }
+    if (!existsSync(join(grave, "pid")) || readFileSync(join(grave, "pid"), "utf8").trim() !== recorded) {
+        renameSync(grave, path);
+        return false;
+    }
+    process.stderr.write(`[task] 回收残锁：登记进程 ${pid} 已退出：${path}\n`);
+    rmSync(grave, { recursive: true, force: true });
+    return true;
+}
 function lock(ctx, id, fn) {
     const path = join(control(ctx, id), "operation.lock");
     mkdirSync(dirname(path), { recursive: true });
-    try {
-        mkdirSync(path);
+    for (let attempt = 0;; attempt++) {
+        try {
+            mkdirSync(path);
+            break;
+        }
+        catch (e) {
+            if (errorCode(e) === "EEXIST" && attempt === 0 && reclaimStaleLock(path))
+                continue;
+            if (errorCode(e) === "EEXIST")
+                throw new Error(`任务操作正在进行或留有残锁，拒绝重复操作：${path}；确认没有该任务的 task 进程在运行后，删除这个目录再重试`, {
+                    cause: e,
+                });
+            throw e;
+        }
     }
-    catch (e) {
-        if (errorCode(e) === "EEXIST")
-            throw new Error(`任务操作正在进行或留有残锁，拒绝重复操作：${path}；确认没有该任务的 task 进程在运行后，删除这个目录再重试`, {
-                cause: e,
-            });
-        throw e;
-    }
+    writeFileSync(join(path, "pid"), String(process.pid));
     let result;
     try {
         result = fn();
@@ -436,8 +468,8 @@ function executorFailureNote(id, failure) {
         : note;
 }
 function promptFor(ctx, snap, resume) {
-    const id = snap.spec.id;
-    return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，直接按已批准范围续跑。" : "执行已分配的独立任务。"}\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n目标：${snap.spec.goal}\n先读任务文件和公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task start ${id} --owner ${snap.config.executor} 自建或恢复工作树（工具启动目录：${snap.sourceRoot}）。\n派发表示已批准任务文件列出的范围：范围内直接实施，不要结束回合等待重复批准；需要扩范围、改验收目标或新增未授权动作时，保存证据交回协调者。\n预算 ${snap.config.budgetMinutes} 分钟是进度检查节点，不是硬期限。\n按公共规则交付：只标待验收或受阻；标待验收前在任务文件「交付与验收记录」追加交付摘要；最终回复给交付 SHA 并复述交付摘要。`;
+    const id = snap.spec.id, tool = `${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task`;
+    return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，直接按已批准范围续跑。" : "执行已分配的独立任务。"}\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n目标：${snap.spec.goal}\n先读任务文件和公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${tool} start ${id} --owner ${snap.config.executor} 自建或恢复工作树（工具启动目录：${snap.sourceRoot}）。\n派发表示已批准任务文件列出的范围：范围内直接实施，不要结束回合等待重复批准；需要扩范围、改验收目标或新增未授权动作时，保存证据交回协调者。\n预算 ${snap.config.budgetMinutes} 分钟是进度检查节点，不是硬期限。\n交付：按验收清单逐条自验，在「自验结果」列写「通过：证据」或「不适用：理由」并提交，再在工作树内执行 ${tool} deliver ${id} --summary-file <工作树外的摘要文件>（三行：改了什么、验证如何、还有什么）；它会复跑验证命令、追加交付摘要并标待验收。做不到时执行 ${tool} block ${id} --reason-file <工作树外的文件> 登记受阻。最终回复给交付 SHA 并复述交付摘要。`;
 }
 function baseRecovery(ctx, snap) {
     return `保留原任务工作树 ${printable(worktree(ctx, snap))}；待验收任务先用 task rework ${snap.spec.id} --message-file <JSON 路径> 登记基准改写原因、复现命令和通过标准。再逐文件核对并完成变基或重放交付，在原树提交后用 task resume ${snap.spec.id} --refresh-definition 重新确认基准并交付，随后重新 verify、独立审查和 accept。仅刷新定义不能修复历史`;
@@ -460,9 +492,34 @@ function modelOverride(snap, model) {
     settings.model = text(model, "模型 --model");
     return { name, settings: executorByName(name).parseSettings(settings) };
 }
+/**
+ * Runs the host's preflight checks in the repository dispatch was called from
+ * (normally main); any failure refuses the dispatch before a snapshot exists.
+ */
+function preflight(ctx, id) {
+    const checks = ctx.cfg.preflight;
+    if (!checks)
+        return undefined;
+    const file = taskFile(ctx.root, ctx.cfg, id);
+    return checks.map((argv) => {
+        const result = spawnSync(argv[0], argv.slice(1), {
+            cwd: ctx.root,
+            env: { ...process.env, TASK_ID: id, TASK_FILE: file },
+            encoding: "utf8",
+            timeout: 600_000,
+            maxBuffer: 16 * 1024 * 1024,
+        });
+        if (result.status !== 0) {
+            const output = Array.from(`${result.stdout ?? ""}${result.stderr ?? ""}`.trim());
+            const shown = output.length > 2000 ? `…${output.slice(-2000).join("")}` : output.join("");
+            throw new Error(`派发预检失败：${JSON.stringify(argv)}；${result.error ? `错误 ${result.error.message}` : `退出码 ${result.status ?? "无"}，信号 ${result.signal ?? "无"}`}；输出：${printable(shown)}；修好后再派发`);
+        }
+        return { argv, exitCode: 0 };
+    });
+}
 export async function dispatch(ctx, id, options = {}) {
     if (options.dryRun) {
-        const snap = prepare(ctx, id, options.refreshDefinition), baseWarning = warnBase(ctx, snap);
+        const snap = prepare(ctx, id, options.refreshDefinition), checks = preflight(ctx, id), baseWarning = warnBase(ctx, snap);
         const executor = snap.config.executor;
         if (options.model !== undefined)
             modelOverride(snap, options.model);
@@ -473,6 +530,7 @@ export async function dispatch(ctx, id, options = {}) {
             dryRun: true,
             executor,
             model: options.model ?? snap.config.executors[executor].model,
+            ...(checks ? { preflight: checks } : {}),
             ...(baseWarning ? { baseWarning } : {}),
         };
     }
@@ -551,6 +609,8 @@ function launch(ctx, id, resuming, options) {
         check(resuming
             ? ["返工", "中断", "受阻", "执行中"].includes(task.status)
             : ["待认领", "执行中", "中断", "受阻", "返工"].includes(task.status), launchStatusError(task.status, id, "启动"));
+        if (!resuming)
+            preflight(ctx, id);
         const baseWarning = warnBase(ctx, snap);
         const definitionFile = snapshotPath(ctx, id);
         if (options.refreshDefinition && existsSync(definitionFile)) {
@@ -818,12 +878,12 @@ function assertClean(wt) {
     check(!flags.some((entry) => /^[a-zS]/.test(entry)), "Git 索引存在忽略工作副本的标记，先取消 assume-unchanged 或 skip-worktree");
     check(git(wt, "status", "--porcelain") === "", "工作树有未提交或暂存内容，不能验证、验收或登记返工");
 }
-function delivery(ctx, snap) {
+function delivery(ctx, snap, expected = "待验收") {
     const wt = worktree(ctx, snap);
     check(existsSync(wt), "交付工作树缺失");
     check(git(wt, "branch", "--show-current") === snap.spec.branch, "交付分支不符");
     const task = checkDefinition(ctx, snap, wt);
-    check(task.status === "待验收", "任务必须处于待验收");
+    check(task.status === expected, expected === "待验收" ? "任务必须处于待验收" : `状态 ${task.status} 不能交付；deliver 和 block 只用于执行中的任务`);
     assertClean(wt);
     checkInputs(wt, snap.spec);
     const commit = git(wt, "rev-parse", "HEAD");
@@ -861,6 +921,54 @@ function delivery(ctx, snap) {
         safePath(wt, path);
     return { wt, task, commit, changed };
 }
+/** Runs the registered verify commands, each in its own empty directory under output; audit adds main-repo audits. */
+async function runChecks(ctx, snap, wt, commit, output, file, result, audit) {
+    for (const [index, entry] of snap.spec.verify.entries()) {
+        const commandOutput = join(output, String(index));
+        mkdirSync(commandOutput);
+        const argv = entry.argv.map((arg) => arg.replaceAll("{output}", commandOutput));
+        const stdout = join(output, `${index}.stdout.log`), stderr = join(output, `${index}.stderr.log`);
+        const mainAudit = audit ? beginMainAudit(ctx.mainRoot, control(ctx, snap.spec.id), `verify:${entry.name}`) : undefined;
+        const out = openSync(stdout, "wx"), err = openSync(stderr, "wx");
+        let run;
+        try {
+            run = await runCommand(argv, wt, { ...process.env, TASK_VERIFY_OUTPUT: commandOutput }, out, err, (entry.timeoutSeconds ?? 300) * 1000);
+        }
+        catch (runError) {
+            try {
+                if (mainAudit)
+                    finishMainAudit(ctx.mainRoot, mainAudit);
+            }
+            catch (auditError) {
+                throw new Error(`${errorMessage(runError)}；${errorMessage(auditError)}`, { cause: auditError });
+            }
+            throw runError;
+        }
+        finally {
+            closeSync(out);
+            closeSync(err);
+        }
+        result.commands.push({
+            name: entry.name,
+            argv,
+            exitCode: run.exitCode,
+            signal: run.signal,
+            timedOut: run.timedOut,
+            stdout,
+            stderr,
+            stdoutSha256: fingerprint(stdout),
+            stderrSha256: fingerprint(stderr),
+            error: run.error ?? null,
+        });
+        atomic(file, result);
+        if (mainAudit)
+            finishMainAudit(ctx.mainRoot, mainAudit);
+        check(run.exitCode === 0 && !run.timedOut && !run.cancelled, `验证命令失败：${entry.name}；${run.timedOut ? "期限已到（超时）" : run.cancelled ? "协调者中断" : "退出码 " + run.exitCode}；错误 ${run.error ?? readFileSync(stderr, "utf8")}；记录 ${file}`);
+        check(git(wt, "rev-parse", "HEAD") === commit, "验证命令改变了交付提交");
+        check(git(wt, "status", "--porcelain") === "", "验证命令修改了受跟踪文件或生成未提交文件");
+        checkInputs(wt, snap.spec);
+    }
+}
 export async function verify(ctx, id, mainReview) {
     return lock(ctx, id, async () => {
         noRunning(ctx, id);
@@ -880,49 +988,7 @@ export async function verify(ctx, id, mainReview) {
             const baseWarning = warnBase(ctx, snap);
             if (baseWarning)
                 result.baseWarning = baseWarning;
-            for (const [index, entry] of snap.spec.verify.entries()) {
-                const commandOutput = join(output, String(index));
-                mkdirSync(commandOutput);
-                const argv = entry.argv.map((arg) => arg.replaceAll("{output}", commandOutput));
-                const stdout = join(output, `${index}.stdout.log`), stderr = join(output, `${index}.stderr.log`);
-                const mainAudit = beginMainAudit(ctx.mainRoot, control(ctx, id), `verify:${entry.name}`);
-                const out = openSync(stdout, "wx"), err = openSync(stderr, "wx");
-                let run;
-                try {
-                    run = await runCommand(argv, wt, { ...process.env, TASK_VERIFY_OUTPUT: commandOutput }, out, err, (entry.timeoutSeconds ?? 300) * 1000);
-                }
-                catch (runError) {
-                    try {
-                        finishMainAudit(ctx.mainRoot, mainAudit);
-                    }
-                    catch (auditError) {
-                        throw new Error(`${errorMessage(runError)}；${errorMessage(auditError)}`, { cause: auditError });
-                    }
-                    throw runError;
-                }
-                finally {
-                    closeSync(out);
-                    closeSync(err);
-                }
-                result.commands.push({
-                    name: entry.name,
-                    argv,
-                    exitCode: run.exitCode,
-                    signal: run.signal,
-                    timedOut: run.timedOut,
-                    stdout,
-                    stderr,
-                    stdoutSha256: fingerprint(stdout),
-                    stderrSha256: fingerprint(stderr),
-                    error: run.error ?? null,
-                });
-                atomic(file, result);
-                finishMainAudit(ctx.mainRoot, mainAudit);
-                check(run.exitCode === 0 && !run.timedOut && !run.cancelled, `验证命令失败：${entry.name}；${run.timedOut ? "期限已到（超时）" : run.cancelled ? "协调者中断" : "退出码 " + run.exitCode}；错误 ${run.error ?? readFileSync(stderr, "utf8")}；记录 ${file}`);
-                check(git(wt, "rev-parse", "HEAD") === commit, "验证命令改变了交付提交");
-                check(git(wt, "status", "--porcelain") === "", "验证命令修改了受跟踪文件或生成未提交文件");
-                checkInputs(wt, snap.spec);
-            }
+            await runChecks(ctx, snap, wt, commit, output, file, result, true);
             result.mainAudits = mainAuditManifest(control(ctx, id));
             result.outputs = outputManifest(output);
             result.passed = true;
@@ -939,6 +1005,76 @@ export async function verify(ctx, id, mainReview) {
         return { ...result, receipt: file };
     });
 }
+/**
+ * Executor-side delivery gate: committed work inside the whitelist, every
+ * acceptance row self-checked, the registered verify commands passing in a
+ * fresh directory. Only then the summary is appended and the task marked 待验收.
+ */
+export async function deliver(ctx, id, summaryPath) {
+    return lock(ctx, id, async () => {
+        const snap = loadSnapshot(ctx, id), wt = worktree(ctx, snap);
+        check(existsSync(wt), "交付工作树缺失");
+        const summary = readNote(summaryPath, wt, "交付摘要");
+        const { task, commit } = delivery(ctx, snap, "执行中");
+        const rows = checkAcceptance(task.content);
+        const formatted = formatSummary(summary);
+        const output = join(control(ctx, id), "self-checks", nonce());
+        mkdirSync(output, { recursive: true });
+        const file = join(output, "result.json"), result = {
+            id,
+            passed: false,
+            startedAt: new Date().toISOString(),
+            definition: snap.definition,
+            commands: [],
+            output,
+            commit,
+        };
+        try {
+            await runChecks(ctx, snap, wt, commit, output, file, result, false);
+            result.outputs = outputManifest(output);
+            result.passed = true;
+        }
+        catch (e) {
+            result.error = errorMessage(e);
+            throw new Error(`${errorMessage(e)}；自验材料 ${file}；修好后再交付，做不到就用 task block 登记受阻`, { cause: e });
+        }
+        finally {
+            result.endedAt = new Date().toISOString();
+            atomic(file, result);
+        }
+        const receipt = relative(ctx.mainRoot, file);
+        const content = record(setHeader(task.content, "状态", "待验收"), `交付摘要（验收清单 ${rows} 条已自验；自验 ${result.commands.length} 条命令通过：${receipt}；被自验提交 ${commit}）\n${indentNote(formatted)}`);
+        commitTask(ctx, snap, wt, content, `交付：${id}`);
+        return { id, status: "待验收", commit: git(wt, "rev-parse", "HEAD"), verifiedCommit: commit, selfCheck: file, summary: formatted };
+    });
+}
+/**
+ * Executor-side block: records the reason and status 受阻, committing only the
+ * task file. It runs exactly when work cannot be finished, so it does not
+ * demand a clean tree or a whitelist-clean diff; uncommitted paths are listed.
+ */
+export function block(ctx, id, reasonPath) {
+    return lock(ctx, id, () => {
+        const snap = loadSnapshot(ctx, id), wt = worktree(ctx, snap);
+        check(existsSync(wt), "任务工作树缺失");
+        check(git(wt, "branch", "--show-current") === snap.spec.branch, "任务分支不符");
+        const reason = readNote(reasonPath, wt, "受阻原因");
+        const task = checkDefinition(ctx, snap, wt);
+        check(task.status === "执行中", `状态 ${task.status} 不能登记受阻；block 只用于执行中的任务`);
+        const rel = `${ctx.cfg.tasksDir}/${id}.md`;
+        const uncommitted = execFileSync("git", ["status", "--porcelain", "--no-renames", "-z", "--untracked-files=all"], {
+            cwd: wt,
+            encoding: "utf8",
+        })
+            .split("\0")
+            .filter(Boolean)
+            .map((entry) => entry.slice(3))
+            .filter((path) => path !== rel);
+        const note = uncommitted.length ? `${reason}\n未提交现场：${uncommitted.join("、")}` : reason;
+        commitTask(ctx, snap, wt, record(setHeader(task.content, "状态", "受阻"), `受阻\n${indentNote(note)}`), `受阻：${id}`);
+        return { id, status: "受阻", commit: git(wt, "rev-parse", "HEAD"), uncommitted };
+    });
+}
 export function rework(ctx, id, messagePath) {
     text(messagePath, "返工说明 --message-file");
     const message = readRework(inputFile(ctx, messagePath));
@@ -950,7 +1086,7 @@ export function rework(ctx, id, messagePath) {
         const task = checkDefinition(ctx, snap, wt);
         check(["待验收", "受阻", "中断"].includes(task.status), `状态 ${task.status} 不能登记返工`);
         assertClean(wt);
-        const content = record(setHeader(task.content, "状态", "返工"), `返工要求\n\n~~~json\n${JSON.stringify(message, null, 2)}\n~~~`);
+        const content = record(setHeader(clearSelfChecks(task.content), "状态", "返工"), `返工要求\n\n~~~json\n${JSON.stringify(message, null, 2)}\n~~~`);
         commitTask(ctx, snap, wt, content, `返工：${id}`);
         return { id, status: "返工", commit: git(wt, "rev-parse", "HEAD"), worktree: wt };
     });

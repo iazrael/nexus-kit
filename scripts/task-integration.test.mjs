@@ -2058,7 +2058,7 @@ test("本地实践：派发写清已批准范围，续跑不再停在同一计�
   assert.match(preview.prompt, /已批准.*范围/);
   assert.match(preview.prompt, /不要结束回合等待.*批准/);
   assert.match(preview.prompt, /扩.*范围/);
-  assert.match(preview.prompt, /标待验收前.*交付与验收记录.*交付摘要/);
+  assert.match(preview.prompt, /自验.*task deliver.*追加交付摘要并标待验收/);
   assert.match(preview.prompt, /最终回复.*交付 SHA.*交付摘要/);
   assert.doesNotMatch(preview.prompt, /仅取消路径/);
   const rules = readFileSync(fileURLToPath(new URL("../packages/devflow/templates/任务协作规则.md", import.meta.url)), "utf8");
@@ -2111,7 +2111,7 @@ test("本地实践：任务模板给接手模型列出背景、授权、步骤�
   const root = repo();
   success(run(root, "new", "cancel-buy", "--title", "取消购买核验"));
   const body = readFileSync(taskPath(root), "utf8");
-  for (const section of ["背景与证据", "已批准计划与授权", "输入与操作步骤", "验收清单", "交付物与失败处理"])
+  for (const section of ["背景与证据", "设计与授权", "输入与操作步骤", "验收清单", "交付物与失败处理"])
     assert.ok(body.includes("## " + section), section);
   assert.match(body, /预期结果/);
   assert.match(body, /负例/);
@@ -2520,4 +2520,261 @@ test("执行器配置错误有清晰报错：未知名称、缺失模型、形�
     assert.notEqual(result.status, 0, result.stdout);
     assert.match(result.stderr, message);
   }
+});
+
+// Executor-side delivery gate: task deliver / task block.
+function started(root) {
+  ready(root);
+  success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  return join(root, ".worktrees/cancel-buy");
+}
+function addAcceptanceRows(wt, rows) {
+  const file = taskPath(wt),
+    content = readFileSync(file, "utf8");
+  const separator = "| --- | --- | --- | --- | --- | --- |\n";
+  assert.ok(content.includes(separator), "模板验收清单应有自验结果列");
+  writeFileSync(file, content.replace(separator, separator + rows.map((cells) => `| ${cells.join(" | ")} |\n`).join("")));
+}
+const goodRows = [
+  ["A1", "运行取消探针", "余额不变", "out/result.txt", "重复取消", "通过：verify 输出 result.txt"],
+  ["A2", "核对并发取消", "不重复退款", "-", "-", "不适用：本任务无并发入口"],
+];
+function summaryFile(root, body = "改了什么：取消路径不再扣款\n验证如何：task verify 自验通过\n还有什么：无") {
+  const dir = mkdtempSync(join(tmpdir(), "sw-task-summary-"));
+  roots.push(dir);
+  const file = join(dir, "summary.md");
+  writeFileSync(file, body);
+  return file;
+}
+function commitAll(wt, message = "delivery work") {
+  git(wt, "add", ".");
+  git(wt, "commit", "-m", message);
+}
+
+test("deliver 自验通过后追加交付摘要、置待验收并提交，协调者可直接 verify 与 accept", async () => {
+  const root = repo(),
+    wt = started(root);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  addAcceptanceRows(wt, goodRows);
+  commitAll(wt);
+  const before = git(wt, "rev-parse", "HEAD");
+  const result = success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
+  assert.equal(result.status, "待验收");
+  assert.equal(result.commit, git(wt, "rev-parse", "HEAD"));
+  assert.notEqual(result.commit, before);
+  assert.equal(git(wt, "status", "--porcelain"), "");
+  const content = readFileSync(taskPath(wt), "utf8");
+  assert.match(content, /> 状态：待验收/);
+  const tail = content.slice(content.indexOf("## 交付与验收记录"));
+  assert.match(tail, /交付摘要[\s\S]*1\. 改了什么：取消路径不再扣款[\s\S]*2\. 验证如何：[\s\S]*3\. 还有什么：无/);
+  assert.match(tail, /自验 1 条命令通过/);
+  const selfCheck = JSON.parse(readFileSync(result.selfCheck, "utf8"));
+  assert.equal(selfCheck.passed, true);
+  assert.equal(selfCheck.commit, before);
+  assert.equal(readFileSync(join(dirname(result.selfCheck), "0/result.txt"), "utf8"), "verified");
+  const verified = success(run(root, "verify", "cancel-buy"));
+  assert.equal(verified.passed, true);
+  success(run(root, "accept", "cancel-buy", "--review", review(root, verified.commit)));
+});
+
+test("deliver 拒绝：未提交、缺自验结果列或条目、自验未通过、摘要缺段、复跑失败、越白名单、非执行中", () => {
+  const root = repo(),
+    wt = started(root);
+  const head = () => git(wt, "rev-parse", "HEAD");
+  const rejected = (pattern, summary = summaryFile(root)) => {
+    const before = head();
+    const result = run(wt, "deliver", "cancel-buy", "--summary-file", summary);
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, pattern);
+    assert.equal(head(), before);
+    assert.match(readFileSync(taskPath(wt), "utf8"), /> 状态：执行中/);
+  };
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  rejected(/未提交/);
+  commitAll(wt);
+  rejected(/验收清单没有条目/);
+  addAcceptanceRows(wt, [goodRows[0], ["A2", "并发", "不重复", "-", "-", "未完成"], ["A3", "边界", "拒绝", "-", "-", ""]]);
+  commitAll(wt, "rows");
+  rejected(/A2[\s\S]*A3|A2.*A3/);
+  writeFileSync(
+    taskPath(wt),
+    readFileSync(taskPath(wt), "utf8").replace("| 未完成 |", "| 通过：并发探针 |").replace("| - | - |  |", "| - | - | 通过：边界负例 |"),
+  );
+  commitAll(wt, "rows fixed");
+  rejected(/还有什么/, summaryFile(root, "改了什么：x\n验证如何：y"));
+  const inside = join(wt, "summary.md");
+  rejected(/工作树外/, inside);
+  writeFileSync(join(wt, "artifact.txt"), "broken");
+  commitAll(wt, "break");
+  rejected(/验证命令失败：取消余额/);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(join(wt, "stray.txt"), "x");
+  commitAll(wt, "stray");
+  rejected(/改动超出白名单.*stray\.txt/);
+  git(wt, "rm", "-q", "stray.txt");
+  git(wt, "commit", "-m", "drop stray");
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
+  const again = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
+  assert.notEqual(again.status, 0);
+  assert.match(again.stderr, /执行中/);
+});
+
+test("deliver 拒绝旧模板：验收清单没有自验结果列时给出补列提示", () => {
+  const root = repo(),
+    wt = started(root);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  const file = taskPath(wt);
+  writeFileSync(
+    file,
+    readFileSync(file, "utf8")
+      .replace(
+        "| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 | 自验结果 |",
+        "| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 |",
+      )
+      .replace("| --- | --- | --- | --- | --- | --- |", "| --- | --- | --- | --- | --- |\n| A1 | 跑 | 过 | x | y |"),
+  );
+  commitAll(wt);
+  const result = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /自验结果.*列/);
+});
+
+test("block 只提交任务文件并列出未提交现场；空原因拒绝", () => {
+  const root = repo(),
+    wt = started(root);
+  const empty = run(wt, "block", "cancel-buy", "--reason-file", summaryFile(root, "  \n"));
+  assert.notEqual(empty.status, 0);
+  assert.match(empty.stderr, /受阻原因/);
+  writeFileSync(join(wt, "old-name.txt"), "renamed");
+  commitAll(wt, "seed rename");
+  git(wt, "mv", "old-name.txt", "new-name.txt");
+  writeFileSync(join(wt, "artifact.txt"), "half");
+  writeFileSync(join(wt, "stray.txt"), "outside whitelist");
+  const blocked = success(
+    run(wt, "block", "cancel-buy", "--reason-file", summaryFile(root, "缺 ROM 原料\n恢复：补登输入后 task resume cancel-buy")),
+  );
+  assert.equal(blocked.status, "受阻");
+  assert.equal(blocked.commit, git(wt, "rev-parse", "HEAD"));
+  assert.deepEqual(blocked.uncommitted.sort(), ["artifact.txt", "new-name.txt", "old-name.txt", "stray.txt"]);
+  assert.match(git(wt, "status", "--porcelain"), /artifact\.txt/);
+  assert.equal(git(wt, "show", "--name-only", "--format=", "HEAD"), "tasks/cancel-buy.md");
+  const content = readFileSync(taskPath(wt), "utf8");
+  assert.match(content, /> 状态：受阻/);
+  assert.match(
+    content.slice(content.indexOf("## 交付与验收记录")),
+    /受阻[\s\S]*缺 ROM 原料[\s\S]*恢复：补登输入[\s\S]*未提交现场：.*old-name\.txt.*artifact\.txt/,
+  );
+});
+
+test("preflight 派发前在主仓运行宿主预检：失败拒绝派发不留快照，通过时预览列出预检", () => {
+  const root = repo();
+  ready(root);
+  const marker = join(mkdtempSync(join(tmpdir(), "sw-task-preflight-")), "env.json");
+  roots.push(dirname(marker));
+  configure(root, (cfg) => {
+    cfg.preflight = [
+      [
+        process.execPath,
+        "-e",
+        `require('fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({id: process.env.TASK_ID, file: process.env.TASK_FILE, cwd: process.cwd()}))`,
+      ],
+    ];
+  });
+  commitAll(root, "preflight ok");
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.deepEqual(preview.preflight, [
+    { argv: JSON.parse(readFileSync(join(root, "nexus.config.json"), "utf8")).task.preflight[0], exitCode: 0 },
+  ]);
+  const env = JSON.parse(readFileSync(marker, "utf8"));
+  assert.equal(env.id, "cancel-buy");
+  assert.equal(env.file, taskPath(root));
+  assert.equal(realpathSync(env.cwd), root);
+  configure(root, (cfg) => {
+    cfg.preflight = [[process.execPath, "-e", "console.error('探针缺 --output 空目录校验');process.exit(4)"]];
+  });
+  commitAll(root, "preflight fail");
+  for (const args of [["--dry-run"], ["--detach"]]) {
+    const failed = run(root, "dispatch", "cancel-buy", ...args);
+    assert.notEqual(failed.status, 0, failed.stdout);
+    assert.match(failed.stderr, /派发预检失败[\s\S]*退出码 4[\s\S]*探针缺 --output 空目录校验/);
+  }
+  assert.equal(existsSync(join(root, "research/local/task-control/cancel-buy/definition.json")), false);
+  configure(root, (cfg) => {
+    cfg.preflight = "not-a-list";
+  });
+  commitAll(root, "preflight bad");
+  assert.match(run(root, "status").stderr, /task\.preflight/);
+});
+
+test("派发提示词让执行者用 deliver 交付、用 block 登记受阻，未配置 preflight 时快照配置不含该字段", () => {
+  const root = repo();
+  ready(root);
+  const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.match(preview.prompt, /task deliver cancel-buy --summary-file/);
+  assert.match(preview.prompt, /task block cancel-buy --reason-file/);
+  assert.match(preview.prompt, /验收清单.*自验结果/);
+  assert.match(preview.prompt, /最终回复.*交付 SHA.*交付摘要/);
+  assert.equal(preview.preflight, undefined);
+  success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  const snap = JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8"));
+  assert.equal("preflight" in snap.config, false);
+});
+
+test("rework 清空验收清单的自验结果，旧的通过不能直接再交付", () => {
+  const root = repo(),
+    wt = started(root);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  addAcceptanceRows(wt, goodRows);
+  commitAll(wt);
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
+  success(run(root, "rework", "cancel-buy", "--message-file", reworkMessage(root)));
+  const content = readFileSync(taskPath(wt), "utf8");
+  const table = content.slice(content.indexOf("## 验收清单"), content.indexOf("## 交付物"));
+  assert.match(table, /\| A1 \| 运行取消探针 \| 余额不变 \| out\/result\.txt \| 重复取消 \| {2}\|/);
+  assert.doesNotMatch(table, /^\|.*(通过：|不适用：)/m);
+  success(run(root, "start", "cancel-buy", "--owner", "执行者"));
+  const again = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
+  assert.notEqual(again.status, 0);
+  assert.match(again.stderr, /自验未完成：A1、A2/);
+});
+
+test("残锁里登记的进程已退出时自动回收；没有进程登记的旧锁仍拒绝", () => {
+  const root = repo(),
+    wt = started(root);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  addAcceptanceRows(wt, goodRows);
+  commitAll(wt);
+  const lockDir = join(root, "research/local/task-control/cancel-buy/operation.lock");
+  mkdirSync(lockDir);
+  const legacy = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
+  assert.notEqual(legacy.status, 0);
+  assert.match(legacy.stderr, /残锁/);
+  const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout;
+  writeFileSync(join(lockDir, "pid"), dead);
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
+  assert.equal(existsSync(lockDir), false);
+});
+
+test("运行中的任务再次派发时先拒绝，不跑预检", async () => {
+  const root = repo();
+  ready(root);
+  executorConfig(root);
+  const marker = join(mkdtempSync(join(tmpdir(), "sw-task-preflight-")), "ran");
+  roots.push(dirname(marker));
+  configure(root, (cfg) => {
+    cfg.preflight = [[process.execPath, "-e", `require('fs').appendFileSync(${JSON.stringify(marker)}, 'x')`]];
+  });
+  commitAll(root, "preflight marker");
+  success(detachedScenario(root, "sleep", "dispatch", "cancel-buy"));
+  assert.equal(readFileSync(marker, "utf8"), "x");
+  const repeat = run(root, "dispatch", "cancel-buy", "--detach");
+  assert.notEqual(repeat.status, 0);
+  assert.match(repeat.stderr, /正在运行/);
+  assert.equal(readFileSync(marker, "utf8"), "x");
+  await finished(root);
+  writeFileSync(taskPath(root), readFileSync(taskPath(root), "utf8") + "\n");
+  const dirty = run(root, "dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(dirty.status, 0);
+  assert.match(dirty.stderr, /未提交/);
+  assert.equal(readFileSync(marker, "utf8"), "x");
 });

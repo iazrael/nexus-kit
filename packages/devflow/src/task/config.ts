@@ -33,6 +33,8 @@ export function parseTaskConfig(value: unknown): TaskConfig {
   const worktreeDir = cfg.worktreeDir === null ? null : text(cfg.worktreeDir ?? ".worktrees", "task.worktreeDir");
   const postCreate = cfg.postCreate ?? [];
   check(Array.isArray(postCreate), "task.postCreate 必须是命令数组");
+  const preflight = cfg.preflight ?? [];
+  check(Array.isArray(preflight), "task.preflight 必须是命令数组");
   return {
     version: 1,
     tasksDir: text(cfg.tasksDir, "task.tasksDir"),
@@ -46,17 +48,18 @@ export function parseTaskConfig(value: unknown): TaskConfig {
     budgetMinutes: minutes(cfg.budgetMinutes, "budgetMinutes"),
     progressMinutes: minutes(cfg.progressMinutes, "progressMinutes"),
     hardTimeoutMinutes: minutes(cfg.hardTimeoutMinutes, "hardTimeoutMinutes"),
+    ...(preflight.length ? { preflight: preflight.map((v) => command(v, "task.preflight")) } : {}),
   };
 }
 
 /**
  * The config exactly as 0.7.0 parsed and hashed it, or null when the config
- * uses anything 0.7.0 could not express (another executor, env deny list).
+ * uses anything 0.7.0 could not express (another executor, env deny list, preflight).
  * Lets snapshots frozen before executors existed pass the config check.
  */
 export function legacyTaskConfig(cfg: TaskConfig): Record<string, unknown> | null {
   const names = Object.keys(cfg.executors);
-  if (cfg.executor !== "agy" || names.length !== 1 || cfg.executorEnvDeny.length) return null;
+  if (cfg.executor !== "agy" || names.length !== 1 || cfg.executorEnvDeny.length || cfg.preflight) return null;
   return {
     version: cfg.version,
     tasksDir: cfg.tasksDir,

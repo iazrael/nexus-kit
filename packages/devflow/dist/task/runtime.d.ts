@@ -92,6 +92,10 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     baseWarning?: string;
 } | {
     baseWarning?: string;
+    preflight?: {
+        argv: string[];
+        exitCode: number;
+    }[];
     id: string;
     base: string;
     prompt: string;
@@ -194,6 +198,30 @@ export declare function verify(ctx: TaskContext, id: string, mainReview?: string
     error?: string;
     endedAt?: string;
 }>;
+/**
+ * Executor-side delivery gate: committed work inside the whitelist, every
+ * acceptance row self-checked, the registered verify commands passing in a
+ * fresh directory. Only then the summary is appended and the task marked 待验收.
+ */
+export declare function deliver(ctx: TaskContext, id: string, summaryPath: string): Promise<{
+    id: string;
+    status: string;
+    commit: string;
+    verifiedCommit: string;
+    selfCheck: string;
+    summary: string;
+}>;
+/**
+ * Executor-side block: records the reason and status 受阻, committing only the
+ * task file. It runs exactly when work cannot be finished, so it does not
+ * demand a clean tree or a whitelist-clean diff; uncommitted paths are listed.
+ */
+export declare function block(ctx: TaskContext, id: string, reasonPath: string): {
+    id: string;
+    status: string;
+    commit: string;
+    uncommitted: string[];
+};
 export declare function rework(ctx: TaskContext, id: string, messagePath: string): {
     id: string;
     status: string;

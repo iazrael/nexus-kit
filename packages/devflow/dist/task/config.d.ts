@@ -6,7 +6,7 @@ export declare function minutes(value: unknown, label: "budgetMinutes" | "progre
 export declare function parseTaskConfig(value: unknown): TaskConfig;
 /**
  * The config exactly as 0.7.0 parsed and hashed it, or null when the config
- * uses anything 0.7.0 could not express (another executor, env deny list).
+ * uses anything 0.7.0 could not express (another executor, env deny list, preflight).
  * Lets snapshots frozen before executors existed pass the config check.
  */
 export declare function legacyTaskConfig(cfg: TaskConfig): Record<string, unknown> | null;

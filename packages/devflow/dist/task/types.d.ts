@@ -52,6 +52,8 @@ export interface TaskConfig {
     budgetMinutes: number;
     progressMinutes: number;
     hardTimeoutMinutes: number;
+    /** Host checks dispatch runs in the main repo first; only present when configured, so older config hashes hold. */
+    preflight?: string[][];
 }
 export interface TaskSpec {
     version: 1;

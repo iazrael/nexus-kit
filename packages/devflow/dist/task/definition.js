@@ -67,7 +67,7 @@ export function newTask(root, cfg, id, title) {
         verify: [],
         productReviewRequired: false,
     };
-    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 一页摘要\n\n- 目标：\n- 起点：\n- 终点：\n- 禁止：\n- 怎么验收：\n\n## 背景与证据\n\n已证事实附来源；待证猜测单列，不得把猜测写成事实。\n\n## 已批准计划与授权\n\n## 输入与操作步骤\n\n## 验收清单\n\n| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 |\n| --- | --- | --- | --- | --- |\n\n## 交付物与失败处理\n\n## 任务配置\n\nverify 的 {output} 是工具预先创建的空目录。探索任务可以登记尚未实现的探针，派发前定好命令接口和通过标准。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 执行记录\n\n每阶段只记结论、检查点和下一步。\n\n## 中断恢复\n\n## 交付与验收记录\n\n执行者每轮标待验收前按公共规则追加交付摘要；协调者验收后登记通过。\n`;
+    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 一页摘要\n\n- 目标：\n- 起点：\n- 终点：\n- 禁止：\n- 怎么验收：\n\n## 背景与证据\n\n已证事实附来源；待证猜测单列，不得把猜测写成事实。\n\n## 设计与授权\n\n机制、方法、判断依据和已知陷阱写在这里，执行者照此实现；机制没查清先派调查任务。授权写允许改的文件和明确不做的事。\n\n## 输入与操作步骤\n\n## 验收清单\n\n执行者交付前逐条自验，在「自验结果」写「通过：证据」或「不适用：理由」；task deliver 检查每一行。\n\n| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 | 自验结果 |\n| --- | --- | --- | --- | --- | --- |\n\n## 交付物与失败处理\n\n## 任务配置\n\nverify 的 {output} 是工具预先创建的空目录。探索任务可以登记尚未实现的探针，派发前定好命令接口和通过标准。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 执行记录\n\n每阶段只记结论、检查点和下一步。\n\n## 中断恢复\n\n## 交付与验收记录\n\n执行者用 task deliver 交付，工具在这里追加交付摘要；协调者验收后登记通过。\n`;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, content, { flag: "wx" });
     return { task: relative(root, file), id, status: "待认领" };
