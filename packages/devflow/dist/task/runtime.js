@@ -514,7 +514,7 @@ function preflight(ctx, id) {
             const shown = output.length > 2000 ? `…${output.slice(-2000).join("")}` : output.join("");
             throw new Error(`派发预检失败：${JSON.stringify(argv)}；${result.error ? `错误 ${result.error.message}` : `退出码 ${result.status ?? "无"}，信号 ${result.signal ?? "无"}`}；输出：${printable(shown)}；修好后再派发`);
         }
-        return { argv, exitCode: 0 };
+        return { argv, exitCode: 0, stdout: result.stdout, stderr: result.stderr };
     });
 }
 export async function dispatch(ctx, id, options = {}) {
@@ -535,7 +535,7 @@ export async function dispatch(ctx, id, options = {}) {
         };
     }
     const run = launch(ctx, id, false, options);
-    return options.detach ? run : waitForRun(ctx, run);
+    return options.detach ? run : { ...(await waitForRun(ctx, run)), ...(run.preflight ? { preflight: run.preflight } : {}) };
 }
 export async function resume(ctx, id, options = {}) {
     const run = launch(ctx, id, true, options);
@@ -609,8 +609,7 @@ function launch(ctx, id, resuming, options) {
         check(resuming
             ? ["返工", "中断", "受阻", "执行中"].includes(task.status)
             : ["待认领", "执行中", "中断", "受阻", "返工"].includes(task.status), launchStatusError(task.status, id, "启动"));
-        if (!resuming)
-            preflight(ctx, id);
+        const checks = resuming ? undefined : preflight(ctx, id);
         const baseWarning = warnBase(ctx, snap);
         const definitionFile = snapshotPath(ctx, id);
         if (options.refreshDefinition && existsSync(definitionFile)) {
@@ -669,6 +668,7 @@ function launch(ctx, id, resuming, options) {
             conversationId,
             runDir,
             resume: resuming,
+            ...(checks ? { preflight: checks } : {}),
             ...(baseWarning ? { baseWarning } : {}),
         };
     });

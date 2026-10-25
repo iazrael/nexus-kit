@@ -2683,7 +2683,7 @@ test("preflight 派发前在主仓运行宿主预检：失败拒绝派发不留�
   commitAll(root, "preflight ok");
   const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
   assert.deepEqual(preview.preflight, [
-    { argv: JSON.parse(readFileSync(join(root, "nexus.config.json"), "utf8")).task.preflight[0], exitCode: 0 },
+    { argv: JSON.parse(readFileSync(join(root, "nexus.config.json"), "utf8")).task.preflight[0], exitCode: 0, stdout: "", stderr: "" },
   ]);
   const env = JSON.parse(readFileSync(marker, "utf8"));
   assert.equal(env.id, "cancel-buy");
@@ -2704,6 +2704,44 @@ test("preflight 派发前在主仓运行宿主预检：失败拒绝派发不留�
   });
   commitAll(root, "preflight bad");
   assert.match(run(root, "status").stderr, /task\.preflight/);
+});
+
+test("preflight 成功时预览保留各命令 stdout 和 stderr，空输出不混入相邻结果", () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    cfg.preflight = [
+      [process.execPath, "-e", "console.log('[WARN] 探针需人工核对');console.error('[INFO] 契约初筛')"],
+      [process.execPath, "-e", "void 0"],
+    ];
+  });
+  commitAll(root, "preflight diagnostics");
+  const result = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
+  assert.equal(result.preflight[0].stdout, "[WARN] 探针需人工核对\n");
+  assert.equal(result.preflight[0].stderr, "[INFO] 契约初筛\n");
+  assert.equal(result.preflight[1].stdout, "");
+  assert.equal(result.preflight[1].stderr, "");
+  assert.equal(existsSync(join(root, "research/local/task-control/cancel-buy/definition.json")), false);
+});
+
+test("preflight 成功时正式派发的启动结果和最终结果都保留提示", async () => {
+  for (const detach of [true, false]) {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    configure(root, (cfg) => {
+      cfg.preflight = [[process.execPath, "-e", "console.log('[WARN] 核对探针');console.error('[INFO] 已审计')"]];
+    });
+    commitAll(root, "preflight launch diagnostics");
+    const invoked = detach ? detachedScenario(root, "complete", "dispatch", "cancel-buy") : run(root, "dispatch", "cancel-buy");
+    // Always let the supervisor finish before checking output or removing the fixture.
+    const ended = await finished(root);
+    assert.equal(ended.run.state, "completed");
+    const result = success(invoked);
+    assert.equal(result.state, detach ? "starting" : "completed");
+    assert.equal(result.preflight?.[0].stdout, "[WARN] 核对探针\n");
+    assert.equal(result.preflight?.[0].stderr, "[INFO] 已审计\n");
+  }
 });
 
 test("派发提示词让执行者用 deliver 交付、用 block 登记受阻，未配置 preflight 时快照配置不含该字段", () => {

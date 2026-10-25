@@ -17,6 +17,26 @@ export declare function shortStatus(result: {
 /** A record still marked running whose supervisor is gone reads as interrupted; the file itself is left untouched. */
 export declare function settleRun(info: RunInfo): RunInfo;
 export declare function dispatch(ctx: TaskContext, id: string, options?: RunOptions): Promise<LaunchResult | {
+    baseWarning?: string;
+    preflight?: {
+        argv: string[];
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+    }[];
+    id: string;
+    base: string;
+    prompt: string;
+    dryRun: boolean;
+    executor: string;
+    model: string;
+} | {
+    preflight?: {
+        argv: string[];
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+    }[];
     runDir: string;
     waitingCancelled: boolean;
     commandExitCode: number;
@@ -54,6 +74,12 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     mainWarning?: string;
     baseWarning?: string;
 } | {
+    preflight?: {
+        argv: string[];
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+    }[];
     result?: import("./types.ts").ExecutorReceipt;
     runDir: string;
     commandExitCode: number;
@@ -90,18 +116,6 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     taskStatus?: string;
     mainWarning?: string;
     baseWarning?: string;
-} | {
-    baseWarning?: string;
-    preflight?: {
-        argv: string[];
-        exitCode: number;
-    }[];
-    id: string;
-    base: string;
-    prompt: string;
-    dryRun: boolean;
-    executor: string;
-    model: string;
 }>;
 export declare function resume(ctx: TaskContext, id: string, options?: RunOptions): Promise<LaunchResult | {
     runDir: string;

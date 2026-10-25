@@ -142,6 +142,7 @@ export interface LaunchResult {
   runDir: string;
   resume: boolean;
   baseWarning?: string;
+  preflight?: { argv: string[]; exitCode: number; stdout: string; stderr: string }[];
 }
 export interface RunOptions {
   dryRun?: boolean | undefined;
