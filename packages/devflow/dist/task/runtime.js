@@ -413,7 +413,7 @@ export function shortStatus(result) {
                                 : v.passed
                                     ? "通过"
                                     : "失败";
-        return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}${t.run?.mainWarning ? "（主仓新提交）" : ""}${t.run?.endReason ? `（${clean(t.run.endReason)}）` : ""}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
+        return `${clean(t.id)}\t${clean(t.status)}${t.treeExists ? "" : "（调用树记录，树缺失）"}\t${clean(t.run?.state ?? "未派发")}${t.run?.executionState === "waiting_approval" ? `（等待审批；CloudCLI 会话 ${clean(t.run.conversationId)}）` : ""}${t.run?.mainWarning ? "（主仓新提交）" : ""}${t.run?.endReason ? `（${clean(t.run.endReason)}）` : ""}\t${t.head?.slice(0, 8) ?? "-"}\t验证=${label}\t验收=${!t.acceptance ? "-" : t.acceptance.error ? "材料错误" : t.acceptance.matchesHead ? "通过" : t.acceptance.integrated ? "已集成（历史）" : "通过（历史，当前无法对账）"}`;
     })
         .join("\n");
 }
@@ -687,11 +687,18 @@ export async function supervise(ctx, id, directory) {
     info.supervisorPid = process.pid;
     const save = () => atomic(file, info);
     let child, budget, progress, hard, sessionTimer, termination, cleanupError, interruption, out, err, sessionError, endResponse;
+    let executorLaunch;
     let executor, readSession;
     const pollSession = () => {
         let id;
         try {
-            id = readSession();
+            const progress = executorLaunch ? executor?.progress?.(executorLaunch) : null;
+            id = progress?.conversationId ?? readSession();
+            if (progress && (info.executionState !== progress.state || info.executionRunId !== progress.runId)) {
+                info.executionState = progress.state;
+                info.executionRunId = progress.runId;
+                save();
+            }
         }
         catch (e) {
             if (!info.conversationId && e instanceof Error && "identifiedConversationId" in e && typeof e.identifiedConversationId === "string") {
@@ -701,6 +708,8 @@ export async function supervise(ctx, id, directory) {
             }
             throw e;
         }
+        if (id && info.resume)
+            check(id === info.conversationId, "执行器返回了不同的原会话");
         if (id && (info.conversationId !== id || info.sessionSource !== "startup-log")) {
             info.conversationId = id;
             info.sessionSource = "startup-log";
@@ -708,9 +717,14 @@ export async function supervise(ctx, id, directory) {
         }
     };
     const terminate = () => {
-        if (termination || !child?.pid)
+        if (termination)
             return;
-        termination = stopGroup(child.pid).catch((error) => {
+        termination = (async () => {
+            if (child?.pid)
+                await stopGroup(child.pid);
+            if (executor?.stop && executorLaunch)
+                await executor.stop(executorLaunch);
+        })().catch((error) => {
             cleanupError = error;
         });
     };
@@ -734,7 +748,7 @@ export async function supervise(ctx, id, directory) {
         executor = executorByName(snap.config.executor);
         const executorSettings = snap.config.executors[snap.config.executor];
         check(executorSettings !== undefined, `快照缺少执行器配置段：${snap.config.executor}`);
-        const executorLaunch = executor.invocation(executorSettings, info.resume ? text(info.conversationId, "conversationId") : null, runDir, info.stdout, readFileSync(join(runDir, "prompt.txt"), "utf8"));
+        executorLaunch = executor.invocation(executorSettings, info.resume ? text(info.conversationId, "conversationId") : null, runDir, info.stdout, readFileSync(join(runDir, "prompt.txt"), "utf8"));
         readSession = executor.sessionScanner(executorLaunch, info.resume ? info.conversationId : null);
         out = openSync(info.stdout, "wx");
         err = openSync(info.stderr, "wx");
@@ -825,7 +839,7 @@ export async function supervise(ctx, id, directory) {
         clearInterval(progress);
         clearTimeout(hard);
         clearInterval(sessionTimer);
-        if (groupAlive(child?.pid))
+        if (groupAlive(child?.pid) || (executor?.stop && executorLaunch))
             terminate();
         await termination;
         if (cleanupError) {
@@ -850,6 +864,7 @@ export async function supervise(ctx, id, directory) {
         if (err !== undefined)
             closeSync(err);
         try {
+            check(!cleanupError, "执行器未确认停止，主仓审计保持未完成");
             const auditFile = readPointer(join(runDir, "main-audit.json")).file;
             check(dirname(auditFile) === join(control(ctx, id), "main-audit"), "主仓审计路径不匹配");
             try {

@@ -3,7 +3,9 @@ import { check, text } from "./validation.ts";
 import { agyExecutor } from "./executor-agy.ts";
 import { opencodeExecutor } from "./executor-opencode.ts";
 
-const registry: Record<string, Executor> = { agy: agyExecutor, opencode: opencodeExecutor };
+import { cloudcliExecutor } from "./executor-cloudcli.ts";
+
+const registry: Record<string, Executor> = { agy: agyExecutor, opencode: opencodeExecutor, cloudcli: cloudcliExecutor };
 
 export function executorByName(name: string): Executor {
   const clean = text(name, "执行器名");

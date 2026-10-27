@@ -30,5 +30,8 @@
   },
   "devDependencies": {
     "@nexus-kit/vite": "workspace:*"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2"
   }
 }

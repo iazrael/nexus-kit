@@ -51,6 +51,8 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     executorPid: number | null;
     executor?: string;
     conversationId: string | null;
+    executionState?: string;
+    executionRunId?: string;
     resume: boolean;
     sourceRoot: string;
     stdout: string;
@@ -94,6 +96,8 @@ export declare function dispatch(ctx: TaskContext, id: string, options?: RunOpti
     executorPid: number | null;
     executor?: string;
     conversationId: string | null;
+    executionState?: string;
+    executionRunId?: string;
     resume: boolean;
     sourceRoot: string;
     stdout: string;
@@ -132,6 +136,8 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     executorPid: number | null;
     executor?: string;
     conversationId: string | null;
+    executionState?: string;
+    executionRunId?: string;
     resume: boolean;
     sourceRoot: string;
     stdout: string;
@@ -169,6 +175,8 @@ export declare function resume(ctx: TaskContext, id: string, options?: RunOption
     executorPid: number | null;
     executor?: string;
     conversationId: string | null;
+    executionState?: string;
+    executionRunId?: string;
     resume: boolean;
     sourceRoot: string;
     stdout: string;

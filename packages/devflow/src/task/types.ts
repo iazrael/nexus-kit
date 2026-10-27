@@ -11,11 +11,19 @@ export interface AgySettings extends ExecutorSettings {
   mode: string;
 }
 export type OpencodeSettings = ExecutorSettings;
+/** CloudCLI 管理执行环境；归一化快照中的 command 和 permissionArgs 保持为空。 */
+export interface CloudcliSettings extends ExecutorSettings {
+  endpoint: string;
+  tokenEnv: string;
+  provider: string;
+  permissionMode: "default" | "bypassPermissions";
+}
 export interface ExecutorLaunch {
   exe: string;
   argv: string[];
   /** File the session scanner polls while the executor runs. */
   sessionLog: string;
+  requestFile?: string;
 }
 /** An executor's own error report, e.g. opencode `{"type":"provider.quota","message":"Rate limit exceeded"}`. */
 export interface ExecutorFailure {
@@ -30,9 +38,12 @@ export interface ExecutorReceipt {
 export interface Executor {
   parseSettings(value: unknown): ExecutorSettings;
   invocation(settings: ExecutorSettings, conversationId: string | null, runDir: string, stdoutPath: string, prompt: string): ExecutorLaunch;
+  progress?(launch: ExecutorLaunch): { conversationId: string; state: string; runId: string } | null;
   sessionScanner(launch: ExecutorLaunch, expected: string | null): () => string | null;
   receipt(stdoutPath: string): ExecutorReceipt;
   /** failure is the executor's own last error report, if its output carries one. */
+  /** 远端执行器在本地桥接退出后，仍须确认服务端停止。 */
+  stop?(launch: ExecutorLaunch): Promise<void>;
   salvage(stdoutPath: string): { conversationId?: string; response?: string; failure?: ExecutorFailure };
 }
 export interface TaskConfig {
@@ -110,6 +121,8 @@ export interface RunInfo {
   executorPid: number | null;
   executor?: string;
   conversationId: string | null;
+  executionState?: string;
+  executionRunId?: string;
   resume: boolean;
   sourceRoot: string;
   stdout: string;

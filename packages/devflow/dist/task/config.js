@@ -26,6 +26,7 @@ export function parseTaskConfig(value) {
     check(executor in executors, `默认执行器 ${executor} 缺少配置段`);
     const executorEnvDeny = stringList(cfg.executorEnvDeny ?? [], "task.executorEnvDeny");
     check(new Set(executorEnvDeny).size === executorEnvDeny.length, "task.executorEnvDeny 有重复变量名");
+    check(executor !== "cloudcli" || executorEnvDeny.length === 0, "cloudcli 使用服务端环境，不支持 executorEnvDeny；请先核对服务端授权并清空该配置");
     const rules = stringList(cfg.rules, "task.rules");
     check(rules.length > 0, "rules 必须列出公共规则");
     const worktreeDir = cfg.worktreeDir === null ? null : text(cfg.worktreeDir ?? ".worktrees", "task.worktreeDir");

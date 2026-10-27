@@ -58,6 +58,8 @@ export function readRun(file: string): RunInfo {
     "reportedConversationId",
     "endedAt",
     "taskStatus",
+    "executionState",
+    "executionRunId",
     "mainWarning",
     "baseWarning",
     "endMessage",

@@ -2816,3 +2816,298 @@ test("运行中的任务再次派发时先拒绝，不跑预检", async () => {
   assert.match(dirty.stderr, /未提交/);
   assert.equal(readFileSync(marker, "utf8"), "x");
 });
+
+// 此假件通过 HTTP 提供 MCP，使用构建后的桥接与监督进程，对接独立执行进程。
+async function cloudcliFixture(root, mode = "complete") {
+  const { createServer } = await import("node:http");
+  const requests = [];
+  let receipt = null;
+  let processHandle;
+  let cancelled = false;
+  let disconnected = false;
+  const server = createServer(async (req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const rpc = JSON.parse(body);
+    if (rpc.id === undefined) {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    let result;
+    if (rpc.method === "initialize")
+      result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "cloudcli-fixture", version: "1" } };
+    else if (rpc.method === "tools/call") {
+      const name = rpc.params.name,
+        input = rpc.params.arguments;
+      requests.push({ name, input });
+      if (name === "execution_start" || name === "execution_continue") {
+        if (!receipt || receipt.requestId !== input.requestId) {
+          receipt = {
+            runId: `run-${requests.length}`,
+            sessionId: input.sessionId ?? "cloudcli-original-session",
+            requestId: input.requestId,
+            state: mode === "approval" ? "waiting_approval" : "running",
+            stopConfirmed: false,
+            response: "",
+          };
+          if (["complete", "disconnect"].includes(mode)) {
+            processHandle = spawn(process.execPath, [executor, "--opencode"], {
+              cwd: root,
+              stdio: "ignore",
+              env: { ...process.env, TASK_ID: "cancel-buy", TASK_ROOT: root, TASK_TOOL_CLI: cli, TASK_TEST_SCENARIO: "complete" },
+            });
+            processHandle.once("exit", (code) => {
+              receipt.state = code === 0 ? "succeeded" : "failed";
+              receipt.stopConfirmed = true;
+              receipt.response = "delivered";
+            });
+          } else {
+            success(run(root, "start", "cancel-buy", "--owner", "cloudcli-fixture"));
+          }
+        }
+      } else if (name === "execution_cancel") {
+        cancelled = true;
+        if (!receipt)
+          result = {
+            content: [{ type: "text", text: "cancelled" }],
+            structuredContent: { requestId: input.requestId, state: "cancelled", stopConfirmed: true },
+          };
+        else if (mode === "uncertain") {
+          result = { isError: true, content: [{ type: "text", text: "fixture stop unknown" }] };
+        } else {
+          if (!receipt.stopConfirmed) receipt.state = "cancelled";
+          receipt.stopConfirmed = true;
+        }
+      }
+      if (name === "execution_get" && mode === "disconnect" && !disconnected) {
+        disconnected = true;
+        req.socket.destroy();
+        return;
+      }
+      if (name === "execution_get" && mode === "rpc-error") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32600, message: "fixture invalid protocol" } }));
+        return;
+      }
+      result ??= {
+        content: [{ type: "text", text: JSON.stringify(receipt) }],
+        structuredContent: {
+          ...receipt,
+          ...(name === "execution_get" && mode === "wrong-run" ? { runId: "other-run" } : {}),
+          ...(name === "execution_get" ? { events: [], cursor: 0, hasMore: false } : {}),
+        },
+      };
+      if (name === "execution_get" && mode === "invalid-result") delete result.structuredContent;
+    } else result = { tools: [] };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}/mcp/execution`;
+  configure(root, (cfg) => {
+    cfg.executor = "cloudcli";
+    cfg.executorEnvDeny = [];
+    cfg.executors.cloudcli = {
+      endpoint,
+      tokenEnv: "TASK_TEST_CLOUDCLI_TOKEN",
+      provider: "zcode",
+      model: "test-model",
+      permissionMode: "default",
+    };
+    if (!["complete", "disconnect", "wrong-run", "rpc-error", "invalid-result"].includes(mode)) cfg.hardTimeoutMinutes = 0.025;
+  });
+  git(root, "add", ".");
+  git(root, "commit", "-m", "cloudcli executor config");
+  return {
+    requests,
+    cancelled: () => cancelled,
+    close: async () => {
+      processHandle?.kill();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+function cloudcliDispatch(root) {
+  return spawnSync(process.execPath, [cli, "task", "dispatch", "cancel-buy", "--detach"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 20_000,
+    env: { ...process.env, TASK_TEST_CLOUDCLI_TOKEN: "test-credential-at-least-32-characters" },
+  });
+}
+
+test("cloudcli executor 通过 MCP 派发和登记原会话，进程成功仍须独立验收", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root);
+  try {
+    success(cloudcliDispatch(root));
+    const done = await finished(root);
+    assert.equal(done.run.state, "completed", JSON.stringify(done.run));
+    assert.equal(done.run.conversationId, "cloudcli-original-session");
+    assert.equal(done.status, "待验收");
+    assert.equal(remote.cancelled(), true);
+    assert.equal(remote.requests.filter((request) => request.name === "execution_start").length, 1);
+    const starts = remote.requests.filter((request) => request.name === "execution_start");
+    assert.equal(remote.requests.find((request) => request.name === "execution_cancel").input.requestId, starts[0].input.requestId);
+  } finally {
+    await remote.close();
+  }
+});
+
+test("cloudcli 硬期限先确认服务端停止，再登记中断和完成主仓审计", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root, "cancel");
+  try {
+    success(cloudcliDispatch(root));
+    const done = await finished(root);
+    assert.equal(done.run.state, "interrupted", JSON.stringify(done.run));
+    assert.equal(done.run.hardTimeout, true);
+    assert.equal(remote.cancelled(), true);
+    assert.equal(done.run.recordError, undefined);
+    assert.match(readFileSync(taskPath(join(root, ".worktrees/cancel-buy")), "utf8"), /> 状态：中断/);
+    assert.equal(done.run.error.includes("未确认停止"), false);
+  } finally {
+    await remote.close();
+  }
+});
+
+test("cloudcli 无法确认远端停止时，不提交中断记录，不把主仓审计标为通过", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root, "uncertain");
+  try {
+    success(cloudcliDispatch(root));
+    const done = await finished(root);
+    assert.equal(done.run.state, "failed", JSON.stringify(done.run));
+    assert.match(done.run.recordError, /未能收尾/);
+    assert.match(done.run.error, /主仓审计保持未完成/);
+    assert.match(readFileSync(taskPath(join(root, ".worktrees/cancel-buy")), "utf8"), /> 状态：执行中/);
+  } finally {
+    await remote.close();
+  }
+});
+
+test("cloudcli 拒绝忽略服务端无法落实的 executorEnvDeny", () => {
+  const root = repo();
+  ready(root);
+  configure(root, (cfg) => {
+    cfg.executor = "cloudcli";
+    cfg.executors.cloudcli = {
+      endpoint: "http://127.0.0.1:3030/mcp/execution",
+      tokenEnv: "TOKEN",
+      provider: "zcode",
+      model: "test",
+      permissionMode: "default",
+    };
+  });
+  const result = run(root, "dispatch", "cancel-buy", "--dry-run");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /executorEnvDeny/);
+});
+
+test("cloudcli 停止未启动请求不会派发新执行", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root);
+  const previous = process.env.TASK_TEST_CLOUDCLI_TOKEN;
+  process.env.TASK_TEST_CLOUDCLI_TOKEN = "test-credential-at-least-32-characters";
+  try {
+    const { cloudcliExecutor } = await import("../packages/devflow/dist/task/executor-cloudcli.js");
+    const cfg = JSON.parse(readFileSync(join(root, "nexus.config.json"), "utf8")).task;
+    const launch = cloudcliExecutor.invocation(
+      cloudcliExecutor.parseSettings(cfg.executors.cloudcli),
+      null,
+      join(root, "research/local/never-started"),
+      join(root, "research/local/stdout"),
+      "must not execute",
+    );
+    await cloudcliExecutor.stop(launch);
+    assert.equal(
+      remote.requests.some((request) => request.name === "execution_start"),
+      false,
+    );
+    assert.equal(remote.requests[0].name, "execution_cancel");
+  } finally {
+    if (previous === undefined) delete process.env.TASK_TEST_CLOUDCLI_TOKEN;
+    else process.env.TASK_TEST_CLOUDCLI_TOKEN = previous;
+    await remote.close();
+  }
+});
+
+test("cloudcli 断线后继续查询同一运行，不重复派发", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root, "disconnect");
+  try {
+    success(cloudcliDispatch(root));
+    const done = await finished(root);
+    assert.equal(done.run.state, "completed", JSON.stringify(done.run));
+    assert.equal(remote.requests.filter((request) => request.name === "execution_start").length, 1);
+  } finally {
+    await remote.close();
+  }
+});
+
+test("cloudcli 查询返回错误运行时退出并取消原请求", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root, "wrong-run");
+  try {
+    success(cloudcliDispatch(root));
+    const done = await finished(root);
+    assert.equal(done.run.state, "failed", JSON.stringify(done.run));
+    assert.match(readFileSync(done.run.stderr, "utf8"), /不同运行或会话/);
+    assert.equal(remote.cancelled(), true);
+  } finally {
+    await remote.close();
+  }
+});
+
+test("cloudcli 等待审批时短状态提示应用会话", async () => {
+  const root = repo();
+  ready(root);
+  const remote = await cloudcliFixture(root, "approval");
+  try {
+    success(cloudcliDispatch(root));
+    let observed = false;
+    for (let index = 0; index < 25; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const status = run(root, "status", "cancel-buy", "--short");
+      if (status.stdout.includes("等待审批")) {
+        observed = true;
+        assert.match(status.stdout, /cloudcli-original-session/);
+        break;
+      }
+    }
+    assert.equal(observed, true);
+    await finished(root);
+  } finally {
+    await remote.close();
+  }
+});
+
+for (const mode of ["rpc-error", "invalid-result"]) {
+  test(`cloudcli ${mode} 属于协议错误，不无限重连`, async () => {
+    const root = repo();
+    ready(root);
+    const remote = await cloudcliFixture(root, mode);
+    try {
+      success(cloudcliDispatch(root));
+      const done = await finished(root);
+      assert.equal(done.run.state, "failed", JSON.stringify(done.run));
+      assert.equal(remote.cancelled(), true);
+      assert.match(readFileSync(done.run.stderr, "utf8"), /工具结果|invalid protocol/);
+    } finally {
+      await remote.close();
+    }
+  });
+}

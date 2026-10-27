@@ -106,6 +106,7 @@ export function readTask(root, cfg, id, complete = true) {
     }
     if (model !== undefined)
         settings.model = model;
+    check(name !== "cloudcli" || effective.executorEnvDeny.length === 0, "cloudcli 使用服务端环境，不支持 executorEnvDeny");
     effective.executor = name;
     effective.executors[name] = settings;
     return { spec, content, status: header(content, "状态"), definition: sha(JSON.stringify(spec)), effective };
