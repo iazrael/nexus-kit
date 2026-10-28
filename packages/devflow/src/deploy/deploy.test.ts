@@ -3,7 +3,7 @@
  * 构建号单调、缓存头/gzip/边缘 TTL 预检、上传切换、冒烟失败回滚、回滚失败、清旧。
  */
 import { describe, expect, it } from "vitest";
-import type { DeployConfig } from "./config.ts";
+import type { DeployConfig } from "../config/config.ts";
 import { buildOfReleaseDir, cacheControlOf, parseServedFingerprint, pickStaleReleases, runDeploy, type DeployDeps } from "./deploy.ts";
 
 const CFG: DeployConfig = {

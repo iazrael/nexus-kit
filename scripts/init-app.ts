@@ -9,7 +9,7 @@
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { installHooks } from "../packages/devflow/src/hooks.ts";
+import { installHooks } from "../packages/devflow/src/hooks/hooks.ts";
 import { kitPackageNames, rewriteKitDeps, KIT_REPO } from "./init-app-lib.ts";
 
 const KIT = resolve(import.meta.dirname, "..");

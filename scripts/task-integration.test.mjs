@@ -1,7 +1,18 @@
 import { createHash as cryptoHash } from "node:crypto";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, realpathSync, readdirSync, unlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  readdirSync,
+  unlinkSync,
+  renameSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -180,13 +191,29 @@ function opencodeConfig(root, executorName = "opencode") {
   git(root, "add", ".");
   git(root, "commit", "-m", "opencode executor config");
 }
-async function finished(root, id = "cancel-buy") {
-  for (let n = 0; n < 180; n++) {
-    const result = success(run(root, "status", id)).tasks[0];
-    if (result.run && !["starting", "running"].includes(result.run.state)) return result;
+function observedTask(root, id) {
+  const response = run(root, "status", id);
+  const unreadable = response.status === 1 && response.stdout.trimStart().startsWith("{") ? JSON.parse(response.stdout).tasks?.[0] : null;
+  // git worktree add 会先建目录再检出文件；只等待这一种可恢复的状态。
+  if (
+    unreadable?.id === id &&
+    unreadable.status === "未知" &&
+    typeof unreadable.error === "string" &&
+    unreadable.error.startsWith("ENOENT:") &&
+    unreadable.error.includes(`/${id}.md'`)
+  )
+    return { task: null, error: unreadable.error };
+  return { task: success(response).tasks[0], error: null };
+}
+async function finished(root, id = "cancel-buy", attempts = 180) {
+  let lastError = null;
+  for (let n = 0; n < attempts; n++) {
+    const { task, error } = observedTask(root, id);
+    lastError = error;
+    if (task?.run && !["starting", "running"].includes(task.run.state)) return task;
     await new Promise((r) => setTimeout(r, 40));
   }
-  assert.fail("执行器没有结束");
+  assert.fail(`执行器没有结束${lastError ? `：${lastError}` : ""}`);
 }
 function detachedScenario(root, scenario, ...args) {
   return spawnSync(process.execPath, [cli, "task", ...args, "--detach"], {
@@ -194,6 +221,46 @@ function detachedScenario(root, scenario, ...args) {
     encoding: "utf8",
     timeout: 20_000,
     env: { ...process.env, TASK_TEST_SCENARIO: scenario },
+  });
+}
+
+for (const [stage, wait] of [
+  ["完成", (root, attempts) => finished(root, "cancel-buy", attempts)],
+  ["阶段", (root, attempts) => until(root, (t) => t.run?.state === "completed", "cancel-buy", attempts)],
+]) {
+  test(`等待执行器${stage}时容忍任务文件暂时缺失`, async () => {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    success(run(root, "dispatch", "cancel-buy"));
+    const file = taskPath(join(root, ".worktrees/cancel-buy"));
+    const held = file + ".held";
+    renameSync(file, held);
+    const restore = setTimeout(() => renameSync(held, file), 200);
+    try {
+      assert.equal((await wait(root)).run.state, "completed");
+    } finally {
+      clearTimeout(restore);
+      if (existsSync(held)) renameSync(held, file);
+    }
+  });
+
+  test(`等待执行器${stage}遇到永久缺文件时保留错误并按上限失败`, async () => {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    success(run(root, "dispatch", "cancel-buy"));
+    unlinkSync(taskPath(join(root, ".worktrees/cancel-buy")));
+    await assert.rejects(wait(root, 2), /(?:执行器没有结束|任务未到达预期阶段).*ENOENT/s);
+  });
+
+  test(`等待执行器${stage}不重试工作树分支错误`, async () => {
+    const root = repo();
+    ready(root);
+    executorConfig(root);
+    success(run(root, "dispatch", "cancel-buy"));
+    git(join(root, ".worktrees/cancel-buy"), "switch", "-c", "wrong-branch");
+    await assert.rejects(wait(root), /工作树分支不符/);
   });
 }
 
@@ -946,13 +1013,15 @@ function asyncRun(root, scenario, ...args) {
   });
   return { child, result };
 }
-async function until(root, predicate, id = "cancel-buy") {
-  for (let i = 0; i < 100; i++) {
-    const t = success(run(root, "status", id)).tasks[0];
-    if (predicate(t)) return t;
+async function until(root, predicate, id = "cancel-buy", attempts = 100) {
+  let lastError = null;
+  for (let i = 0; i < attempts; i++) {
+    const { task, error } = observedTask(root, id);
+    lastError = error;
+    if (task && predicate(task)) return task;
     await new Promise((r) => setTimeout(r, 30));
   }
-  assert.fail("任务未到达预期阶段");
+  assert.fail(`任务未到达预期阶段${lastError ? `：${lastError}` : ""}`);
 }
 test("INT 和 TERM 只取消等待，监督进程仍可完成交付", async () => {
   for (const [signal, code] of [
@@ -1672,7 +1741,7 @@ test("硬期限中断记录排在执行器后代收尾之后，不与残留进�
   ready(root);
   executorConfig(root);
   configure(root, (cfg) => {
-    cfg.hardTimeoutMinutes = 0.04;
+    cfg.hardTimeoutMinutes = 0.06;
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "hard limit");

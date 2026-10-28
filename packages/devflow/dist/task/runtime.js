@@ -1,9 +1,9 @@
 import { recordRunEnd } from "./run-end.js";
 import { readNote, indentNote, formatSummary, checkAcceptance, clearSelfChecks } from "./deliver.js";
 import { git, atomic } from "./io.js";
-import { loadNexusConfig, loadNexusConfigAt } from "../config.js";
-import { worktreeNew } from "../worktree.js";
-import { systemProcessProbe } from "../worktree-procs.js";
+import { loadNexusConfig, loadNexusConfigAt } from "../config/config.js";
+import { worktreeNew } from "../worktree/worktree.js";
+import { systemProcessProbe } from "../worktree/worktree-procs.js";
 import { legacyTaskConfig, taskWorktree } from "./config.js";
 import { assertMainClean, beginMainAudit, finishMainAudit, reviewMainAudits, assertMainAuditsReviewed, mainAuditManifest, mainAuditWarnings, } from "./main-audit.js";
 import { errorMessage, errorCode, printable, checkFingerprint } from "./validation.js";

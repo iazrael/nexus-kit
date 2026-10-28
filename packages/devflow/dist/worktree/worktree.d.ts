@@ -1,4 +1,4 @@
-import type { WorktreeConfig } from "./config.ts";
+import type { WorktreeConfig } from "../config/config.ts";
 /** 本机进程探测与处置（生产实现见 worktree-procs.ts） */
 export interface ProcessProbe {
     /** pid → 监听端口 */

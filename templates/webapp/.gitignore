@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 temp/
+.worktrees/
 *.tsbuildinfo
 # 构建计数器不入 git（主仓真身，工作树软链共享）
 .build-number

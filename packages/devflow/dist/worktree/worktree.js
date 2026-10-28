@@ -107,12 +107,23 @@ function statOrNull(path) {
 }
 function layoutOf(env) {
     const commonDir = realpathSync(git(env.cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"));
-    const mainRoot = dirname(commonDir);
+    let mainRoot = dirname(commonDir);
+    if (basename(commonDir) !== ".git") {
+        // 子模块的公共目录在父仓库内；core.worktree 相对于该公共目录定位主工作区。
+        const configuredRoot = git(env.cwd, "config", "--local", "--default", "", "--get", "core.worktree");
+        if (configuredRoot === "")
+            throw new Error("[worktree] 缺少主工作区路径，拒绝操作其他仓库");
+        mainRoot = realpathSync(resolve(commonDir, configuredRoot));
+        const mainCommonDir = realpathSync(git(mainRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+        if (mainCommonDir !== commonDir)
+            throw new Error("[worktree] 无法确认主工作区：Git 公共目录不匹配，拒绝操作其他仓库");
+    }
     const worktreesDir = env.config.dir === null ? resolve(mainRoot, "..", `${basename(mainRoot)}-worktrees`) : resolve(mainRoot, env.config.dir);
     return { mainRoot, commonDir, worktreesDir };
 }
 function worktrees(layout) {
-    return parseWorktreeList(git(layout.mainRoot, "worktree", "list", "--porcelain"));
+    // Git 对子模块把元数据目录列为第一条路径，主工作区以已核验的布局为准。
+    return parseWorktreeList(git(layout.mainRoot, "worktree", "list", "--porcelain")).map((wt) => wt.main ? { ...wt, path: layout.mainRoot } : wt);
 }
 function registeredPorts(layout) {
     const result = new Map();
@@ -205,12 +216,20 @@ export function worktreeNew(env, opts) {
         throw new Error(`[worktree] 目标已存在：${root}`);
     return createWorktree(env, layout, root, opts.branch, opts.from ?? env.config.base, new Set(isolate));
 }
+function ensureWorktreesDir(layout) {
+    mkdirSync(layout.worktreesDir, { recursive: true });
+    if (isInside(layout.worktreesDir, layout.mainRoot)) {
+        const ignoreFile = join(layout.worktreesDir, ".gitignore");
+        if (!existsSync(ignoreFile))
+            writeFileSync(ignoreFile, "*\n");
+    }
+}
 function createWorktree(env, layout, root, branch, from, isolate) {
     const existed = branchExists(layout.mainRoot, branch);
     let added = false;
     try {
         const port = withCreateLock(layout, () => {
-            mkdirSync(layout.worktreesDir, { recursive: true });
+            ensureWorktreesDir(layout);
             git(layout.mainRoot, "worktree", "add", ...(existed ? [root, branch] : [root, "-b", branch, from]));
             added = true;
             const taken = new Set([...registeredPorts(layout).values(), ...[...env.procs.listening().values()].flat()]);

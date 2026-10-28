@@ -1,4 +1,4 @@
-import type { TaskConfig } from "./task/types.ts";
+import type { TaskConfig } from "../task/types.ts";
 export interface DeployConfig {
     /** ssh 目标，如 root@1.2.3.4 */
     target: string;
@@ -20,7 +20,7 @@ export interface DeployConfig {
     edgeTtlProbes: string[];
 }
 export interface WorktreeConfig {
-    /** 工作树父目录（相对主仓库根）；null = 主仓库同级的「<仓库目录名>-worktrees」 */
+    /** 工作树父目录（相对主仓库根）；未配置默认 ".worktrees"；null = 主仓库同级的「<仓库目录名>-worktrees」 */
     dir: string | null;
     /** 主干分支：合入目标，也是新工作树的默认起点 */
     base: string;

@@ -10,6 +10,7 @@ templates/*/dist/
 .cache/
 coverage/
 temp/
+.worktrees/
 .build-number
 .build-number.lock
 
@@ -22,6 +23,7 @@ reviews/*.visual-check.*
 !.env.example
 
 .DS_Store
+.vscode/
 
 # archify 图示的源文件与回执（只有 docs/架构算法/图示/*.html 入库）
 .archify/

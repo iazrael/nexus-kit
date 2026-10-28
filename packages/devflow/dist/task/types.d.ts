@@ -1,4 +1,4 @@
-import type { WorktreeConfig } from "../config.ts";
+import type { WorktreeConfig } from "../config/config.ts";
 /** Every executor names its binary, an explicit model, and its permission flags. */
 export interface ExecutorSettings {
     command: string[];

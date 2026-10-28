@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INTERNAL_PREFIX, parseChangelogHistory, WIP_PREFIX } from "@nexus-kit/vite";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseNexusConfig, type ReleaseConfig } from "./config.ts";
-import { installHooks } from "./hooks.ts";
+import { parseNexusConfig, type ReleaseConfig } from "../config/config.ts";
+import { installHooks } from "../hooks/hooks.ts";
 import { clearReleaseLock, holdReleaseLock, readReleaseLock, RELEASE_LOCK, runRelease, TOKEN_ENV, type ReleaseDeps } from "./release.ts";
 
 const temps: string[] = [];

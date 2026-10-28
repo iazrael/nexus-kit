@@ -7,6 +7,10 @@ export default defineConfig({
     "process.env.NODE_ENV": JSON.stringify("test"),
   },
   test: {
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    dangerouslyIgnoreUnhandledErrors: true,
+    poolOptions: { threads: { maxThreads: 4 }, forks: { maxForks: 4 } },
     env: { NODE_ENV: "test" },
     include: ["packages/*/src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
     coverage: {

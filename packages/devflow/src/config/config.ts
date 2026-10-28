@@ -1,5 +1,5 @@
-import { parseTaskConfig } from "./task/config.ts";
-import type { TaskConfig } from "./task/types.ts";
+import { parseTaskConfig } from "../task/config.ts";
+import type { TaskConfig } from "../task/types.ts";
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
  * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
@@ -33,7 +33,7 @@ export interface DeployConfig {
 }
 
 export interface WorktreeConfig {
-  /** 工作树父目录（相对主仓库根）；null = 主仓库同级的「<仓库目录名>-worktrees」 */
+  /** 工作树父目录（相对主仓库根）；未配置默认 ".worktrees"；null = 主仓库同级的「<仓库目录名>-worktrees」 */
   dir: string | null;
   /** 主干分支：合入目标，也是新工作树的默认起点 */
   base: string;
@@ -197,7 +197,7 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
     if (!share.includes(p)) throw new Error(`[nexus.config] worktree.isolatable 的 ${p} 不在 worktree.share 里——只能隔离共享项`);
   }
   const worktree: WorktreeConfig = {
-    dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
+    dir: wt.dir === undefined ? ".worktrees" : wt.dir === null ? null : str(wt, "dir", "worktree"),
     base,
     portBase,
     portStep: posInt(wt, "portStep", "worktree", 10),

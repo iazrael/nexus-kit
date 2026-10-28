@@ -16,7 +16,7 @@
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ReleaseConfig } from "./config.ts";
+import type { ReleaseConfig } from "../config/config.ts";
 
 export const RELEASE_LOCK = "nexus-release.lock";
 /** 发版执行人持令豁免的环境变量 */

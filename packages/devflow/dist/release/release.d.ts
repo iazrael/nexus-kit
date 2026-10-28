@@ -1,4 +1,4 @@
-import type { ReleaseConfig } from "./config.ts";
+import type { ReleaseConfig } from "../config/config.ts";
 export declare const RELEASE_LOCK = "nexus-release.lock";
 /** 发版执行人持令豁免的环境变量 */
 export declare const TOKEN_ENV = "NEXUS_RELEASE_TOKEN";
