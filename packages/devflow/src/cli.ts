@@ -14,10 +14,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { changelogGate } from "./check-changelog.ts";
-import { loadNexusConfig, loadNexusConfigAt } from "./config.ts";
-import { auditDocs } from "./docs-audit.ts";
-import { installHooks, outdatedHooks } from "./hooks.ts";
+import { changelogGate } from "./changelog/check-changelog.ts";
+import { loadNexusConfig, loadNexusConfigAt } from "./config/config.ts";
+import { auditDocs } from "./docs/docs-audit.ts";
+import { installHooks, outdatedHooks } from "./hooks/hooks.ts";
 
 function git(args: string[], cwd?: string): string {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...(cwd ? { cwd } : {}) });
@@ -44,7 +44,7 @@ const WORKTREE_USAGE = `用法：
   nexus-devflow worktree isolate <共享项,共享项> [--empty]     （在工作树里执行）
   nexus-devflow worktree hook-create | hook-remove           （Claude Code 钩子，读 stdin JSON）
 
-  new      在主仓库同级的 <仓库名>-worktrees/ 下建树：自主干新建分支、共享项软链回主仓库、登记预览端口、
+  new      在项目下的 .worktrees/（或 worktree.dir 配置目录）下建树：自主干新建分支、共享项软链回主仓库、登记预览端口、
            跑 worktree.postCreate。--isolate 列出的共享项留空目录，由本树自己生成。
   merge    把分支合回主干：分支须先在工作树 git rebase <主干> 并验证，这里只快进；分叉即拒绝；被钩子
            拦下时自动还原主仓库残留；合入后在主仓库跑 worktree.postMerge，失败非零退出。单独执行，
@@ -75,8 +75,8 @@ async function worktreeCmd(argv: string[]): Promise<number> {
     console.log(WORKTREE_USAGE);
     return sub === undefined ? 2 : 0;
   }
-  const wt = await import("./worktree.ts");
-  const { systemProcessProbe } = await import("./worktree-procs.ts");
+  const wt = await import("./worktree/worktree.ts");
+  const { systemProcessProbe } = await import("./worktree/worktree-procs.ts");
   const hookMode = sub === "hook-create" || sub === "hook-remove";
   const env = {
     cwd: process.cwd(),
@@ -138,7 +138,7 @@ async function releaseCmd(argv: string[]): Promise<number> {
     options: { ack: { type: "boolean" }, lock: { type: "boolean" }, unlock: { type: "boolean" }, "ttl-min": { type: "string" } },
   });
   const cfg = loadNexusConfig();
-  const rel = await import("./release.ts");
+  const rel = await import("./release/release.ts");
   const commonDir = resolve(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
   if (values.unlock === true) {
     console.log(
@@ -249,7 +249,7 @@ async function main(cmd: string | undefined): Promise<number> {
     case "deploy": {
       const cfg = loadNexusConfig();
       if (cfg.deploy === null) throw new Error("[deploy] nexus.config.json 没有 deploy 段");
-      const { runDeploy } = await import("./deploy.ts");
+      const { runDeploy } = await import("./deploy/deploy.ts");
       const { assertInjectedBuild, readBundleCodes } = await import("@nexus-kit/vite");
       runDeploy(
         { config: cfg.deploy, appRoot: resolve(cfg.repoRoot, cfg.appRoot) },

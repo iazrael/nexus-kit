@@ -10,6 +10,7 @@ templates/*/dist/
 .cache/
 coverage/
 temp/
+.worktrees/
 .build-number
 .build-number.lock
 

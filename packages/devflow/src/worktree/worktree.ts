@@ -36,7 +36,7 @@ import {
   type Stats,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { WorktreeConfig } from "./config.ts";
+import type { WorktreeConfig } from "../config/config.ts";
 import { pidAlive, sleepMs } from "./worktree-procs.ts";
 import {
   branchOfWorktreeArg,

@@ -50,7 +50,7 @@ describe("parseNexusConfig", () => {
 
   it("工作树段缺省值：主干随部署分支、端口 4173 起步、共享应用根构建计数器、建树装依赖、合入后构建", () => {
     expect(parseNexusConfig({ appRoot: "apps/web", deploy: { ...DEPLOY, branch: "trunk" } }, "/repo").worktree).toEqual({
-      dir: null,
+      dir: ".worktrees",
       base: "trunk",
       portBase: 4173,
       portStep: 10,
@@ -64,7 +64,8 @@ describe("parseNexusConfig", () => {
         ["pnpm", "build"],
       ],
     });
-    expect(parseNexusConfig({}, "/repo").worktree).toMatchObject({ base: "main", share: [".build-number"] });
+    expect(parseNexusConfig({}, "/repo").worktree).toMatchObject({ dir: ".worktrees", base: "main", share: [".build-number"] });
+    expect(parseNexusConfig({ worktree: { dir: null } }, "/repo").worktree.dir).toBeNull();
   });
 
   it("工作树段显式值原样采纳，路径尾斜杠规整", () => {

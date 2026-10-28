@@ -5,8 +5,10 @@
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { RELEASE_LOCK, TOKEN_ENV } from "./release.js";
+import { RELEASE_LOCK, TOKEN_ENV } from "../release/release.ts";
+
 export const HOOKS_DIR = ".githooks";
+
 /**
  * 先用项目依赖里钉住的版本（模板生成的项目），没有再用 PATH 上的全局命令（走 PATH 的存量项目）。
  * git 在工作树根目录执行 pre-commit，所以相对路径 node_modules/.bin 指的是本树的依赖。
@@ -19,12 +21,13 @@ if command -v nexus-devflow >/dev/null 2>&1; then exec nexus-devflow check-chang
 echo "[pre-commit] 找不到 nexus-devflow：项目依赖里没有，PATH 上也没有。在 nexus-kit 执行 pnpm install-cli 安装全局命令" >&2
 exit 1
 `;
+
 /**
  * 发版锁硬闸（锁的格式与生命周期见 release.ts）：锁在、未过期、事务要改锁内 ref、
  * NEXUS_RELEASE_TOKEN 与锁内 token 不符 → 在 prepared 阶段拒绝。锁读不到、解析不出一律放行
  * （fail-open）。只用 sh + sed，钩子在每次引用变更时都跑，不起 node。
  */
-export const REFERENCE_TRANSACTION = String.raw `#!/bin/sh
+export const REFERENCE_TRANSACTION = String.raw`#!/bin/sh
 # 发版锁硬闸（@nexus-kit/devflow）：nexus-devflow release 链中或 release --lock 之后冻结主干，
 # 发版执行人凭 ${TOKEN_ENV} 放行。确认是残留锁可 nexus-devflow release --unlock。
 [ "$1" = "prepared" ] || exit 0
@@ -52,32 +55,34 @@ version=$(field version)
 echo "发版锁生效中：$version 正在发布，$locked_ref 已冻结（约 $(( (expires - $(date +%s)) / 60 )) 分钟后自动失效）。发版执行人凭 ${TOKEN_ENV} 放行，其余等发版完成再合入；确认是残留锁可 nexus-devflow release --unlock" >&2
 exit 1
 `;
-const HOOKS = [
-    ["pre-commit", PRE_COMMIT],
-    ["reference-transaction", REFERENCE_TRANSACTION],
+
+const HOOKS: ReadonlyArray<[string, string]> = [
+  ["pre-commit", PRE_COMMIT],
+  ["reference-transaction", REFERENCE_TRANSACTION],
 ];
-export function installHooks(repoRoot, git) {
-    const dir = join(repoRoot, HOOKS_DIR);
-    mkdirSync(dir, { recursive: true });
-    const written = [];
-    for (const [name, body] of HOOKS) {
-        const file = join(dir, name);
-        if (existsSync(file))
-            continue;
-        writeFileSync(file, body);
-        chmodSync(file, 0o755);
-        written.push(`${HOOKS_DIR}/${name}`);
-    }
-    git(["config", "core.hooksPath", HOOKS_DIR]);
-    return written;
+
+export function installHooks(repoRoot: string, git: (args: string[]) => void): string[] {
+  const dir = join(repoRoot, HOOKS_DIR);
+  mkdirSync(dir, { recursive: true });
+  const written: string[] = [];
+  for (const [name, body] of HOOKS) {
+    const file = join(dir, name);
+    if (existsSync(file)) continue;
+    writeFileSync(file, body);
+    chmodSync(file, 0o755);
+    written.push(`${HOOKS_DIR}/${name}`);
+  }
+  git(["config", "core.hooksPath", HOOKS_DIR]);
+  return written;
 }
+
 /**
  * 已存在但与 kit 当前版本内容不同的钩子（宿主改过，或装的是旧版 kit 的）：installHooks 不覆盖它们，
  * 升级 kit 后的新逻辑（如发版锁）就进不去——调用方据此提示宿主手动对比合并。
  */
-export function outdatedHooks(repoRoot) {
-    return HOOKS.flatMap(([name, body]) => {
-        const file = join(repoRoot, HOOKS_DIR, name);
-        return existsSync(file) && readFileSync(file, "utf8") !== body ? [`${HOOKS_DIR}/${name}`] : [];
-    });
+export function outdatedHooks(repoRoot: string): string[] {
+  return HOOKS.flatMap(([name, body]) => {
+    const file = join(repoRoot, HOOKS_DIR, name);
+    return existsSync(file) && readFileSync(file, "utf8") !== body ? [`${HOOKS_DIR}/${name}`] : [];
+  });
 }

@@ -1,4 +1,4 @@
-import { parseTaskConfig } from "./task/config.js";
+import { parseTaskConfig } from "../task/config.js";
 /**
  * nexus.config.json（宿主仓库根）的读取与校验：devflow 各命令（docs-audit、
  * check-changelog、deploy、worktree、release）共用这一份配置。外部文件先作 unknown 校验，字段非法即抛错
@@ -142,7 +142,7 @@ export function parseNexusConfig(raw, repoRoot, env = {}) {
             throw new Error(`[nexus.config] worktree.isolatable 的 ${p} 不在 worktree.share 里——只能隔离共享项`);
     }
     const worktree = {
-        dir: wt.dir === undefined ? null : str(wt, "dir", "worktree"),
+        dir: wt.dir === undefined ? ".worktrees" : wt.dir === null ? null : str(wt, "dir", "worktree"),
         base,
         portBase,
         portStep: posInt(wt, "portStep", "worktree", 10),

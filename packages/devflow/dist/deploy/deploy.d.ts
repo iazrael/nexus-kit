@@ -1,4 +1,4 @@
-import type { DeployConfig } from "./config.ts";
+import type { DeployConfig } from "../config/config.ts";
 export interface DeployDeps {
     /** 本机执行命令，返回 stdout；失败抛错（错误对象带 status） */
     run(cmd: string, args: readonly string[]): string;

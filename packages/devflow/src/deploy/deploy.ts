@@ -15,7 +15,7 @@
  * 副作用（命令执行、日志）全部经 DeployDeps 注入：决策逻辑单测覆盖，真实执行由 cli 接线。
  */
 import { join, resolve } from "node:path";
-import type { DeployConfig } from "./config.ts";
+import type { DeployConfig } from "../config/config.ts";
 
 export interface DeployDeps {
   /** 本机执行命令，返回 stdout；失败抛错（错误对象带 status） */

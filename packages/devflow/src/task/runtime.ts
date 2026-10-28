@@ -17,9 +17,9 @@ import type {
   AcceptanceStatus,
 } from "./types.ts";
 import type { ChildProcess } from "node:child_process";
-import { loadNexusConfig, loadNexusConfigAt } from "../config.ts";
-import { worktreeNew } from "../worktree.ts";
-import { systemProcessProbe } from "../worktree-procs.ts";
+import { loadNexusConfig, loadNexusConfigAt } from "../config/config.ts";
+import { worktreeNew } from "../worktree/worktree.ts";
+import { systemProcessProbe } from "../worktree/worktree-procs.ts";
 import { legacyTaskConfig, taskWorktree } from "./config.ts";
 import {
   assertMainClean,

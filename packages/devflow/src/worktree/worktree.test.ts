@@ -19,9 +19,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseNexusConfig, type WorktreeConfig } from "./config.ts";
+import { parseNexusConfig, type WorktreeConfig } from "../config/config.ts";
 import {
   hookCreate,
   hookRemove,
@@ -126,7 +126,7 @@ function harness(over: Partial<WorktreeConfig> = {}, failOn: (line: string) => b
       if (failOn(line)) throw new Error(`${line} 失败`);
     },
   });
-  const wtDir = join(repo.base, "app-worktrees");
+  const wtDir = config.dir === null ? join(repo.base, "app-worktrees") : resolve(repo.main, config.dir);
   return { ...repo, logs, runs, procs, env, wtDir };
 }
 
@@ -149,7 +149,8 @@ function submoduleHarness() {
     index: git(parent, "ls-files", "--stage"),
     modules: readFileSync(join(parent, ".gitmodules"), "utf8"),
   });
-  return { ...h, parent, sub, parentState, env: (cwd = sub) => h.env(cwd), wtDir: join(parent, "vendor/child app-worktrees") };
+  const wtDir = h.env(sub).config.dir === null ? join(parent, "vendor/child app-worktrees") : resolve(sub, h.env(sub).config.dir!);
+  return { ...h, parent, sub, parentState, env: (cwd = sub) => h.env(cwd), wtDir };
 }
 
 describe("子模块工作树", () => {
@@ -224,15 +225,22 @@ describe("子模块工作树", () => {
 });
 
 describe("worktree new", () => {
-  it("建在主仓库同级目录、自主干新建分支、共享项软链回主仓库、登记端口、跑 postCreate", () => {
+  it("建在默认工作树目录（.worktrees）、自主干新建分支、共享项软链回主仓库、登记端口、跑 postCreate", () => {
     const h = harness();
     const { root, port } = worktreeNew(h.env(), { branch: "feat/x" });
+    expect(root).toBe(join(h.main, ".worktrees/x"));
     expect(root).toBe(join(h.wtDir, "x"));
     expect(git(root, "branch", "--show-current")).toBe("feat/x");
     expect(readlinkSync(join(root, ".build-number"))).toBe(join(h.main, ".build-number"));
     expect(readFileSync(join(root, "research/doc.md"), "utf8")).toBe("档案\n");
     expect(port).toBe(4183);
     expect(h.runs).toEqual([{ line: "setup", cwd: root }]);
+  });
+
+  it("显式配置 dir: null 时回退到主仓库同级目录", () => {
+    const h = harness({ dir: null });
+    const { root } = worktreeNew(h.env(), { branch: "feat/legacy-dir" });
+    expect(root).toBe(join(h.base, "app-worktrees/legacy-dir"));
   });
 
   it("端口避开已登记与正在监听的；目标已存在拒绝；未知隔离项拒绝", () => {
