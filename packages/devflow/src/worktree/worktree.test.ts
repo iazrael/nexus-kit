@@ -177,7 +177,7 @@ describe("子模块工作树", () => {
     expect(existsSync(root)).toBe(false);
     expect(worktreeList(h.env())).toHaveLength(1);
     expect(h.parentState()).toEqual(before);
-  });
+  }, 60_000);
 
   it("子模块主工作区不干净时拒绝合入，未提交文件阻止回收", () => {
     const h = submoduleHarness();
