@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-28
+
 - 变更：`worktree.dir` 默认目录调整为项目根目录下的 `.worktrees`（此前默认与项目同级的兄弟目录）；保留显式配置 `null` 回退到同级目录的兼容行为，根目录及模板 `.gitignore` 补充 `.worktrees/`。
 - 修复：工作树建在主仓库内时，自动在父工作树目录创建含通配符的 `.gitignore`，避免宿主未显式忽略时主仓库变脏。
 - 内部：`packages/devflow/src` 源码按模块划分目录（`changelog/`、`config/`、`deploy/`、`docs/`、`hooks/`、`release/`、`worktree/`），根入口 `cli.ts` 与 `index.ts` 保持不变，对外 API 100% 兼容。
