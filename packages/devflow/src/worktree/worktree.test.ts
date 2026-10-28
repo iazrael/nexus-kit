@@ -36,8 +36,9 @@ import {
 } from "./worktree.ts";
 
 const temps: string[] = [];
-afterEach(() => {
+afterEach(async () => {
   for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
+  await new Promise((resolve) => setTimeout(resolve, 20));
 });
 
 function git(cwd: string, ...argv: string[]): string {

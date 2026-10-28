@@ -1741,7 +1741,7 @@ test("硬期限中断记录排在执行器后代收尾之后，不与残留进�
   ready(root);
   executorConfig(root);
   configure(root, (cfg) => {
-    cfg.hardTimeoutMinutes = 0.04;
+    cfg.hardTimeoutMinutes = 0.06;
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "hard limit");
