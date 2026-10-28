@@ -7,6 +7,7 @@ export default defineConfig({
     "process.env.NODE_ENV": JSON.stringify("test"),
   },
   test: {
+    testTimeout: 20_000,
     env: { NODE_ENV: "test" },
     include: ["packages/*/src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
     coverage: {

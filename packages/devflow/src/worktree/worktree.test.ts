@@ -56,7 +56,7 @@ function newRepo(): { base: string; main: string; hooks: string } {
   git(main, "config", "user.email", "t@nexus.local");
   git(main, "config", "user.name", "t");
   git(main, "config", "core.hooksPath", hooks);
-  writeFileSync(join(main, ".gitignore"), ".build-number\nresearch\nnode_modules/\ntemp/\n");
+  writeFileSync(join(main, ".gitignore"), ".build-number\nresearch\nnode_modules/\ntemp/\n.worktrees/\n");
   writeFileSync(join(main, "a.txt"), "a\n");
   git(main, "add", "-A");
   git(main, "commit", "-q", "-m", "base");

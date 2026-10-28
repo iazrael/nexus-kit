@@ -296,6 +296,14 @@ export function worktreeNew(env: WorktreeEnv, opts: NewOptions): { root: string;
   return createWorktree(env, layout, root, opts.branch, opts.from ?? env.config.base, new Set(isolate));
 }
 
+function ensureWorktreesDir(layout: Layout): void {
+  mkdirSync(layout.worktreesDir, { recursive: true });
+  if (isInside(layout.worktreesDir, layout.mainRoot)) {
+    const ignoreFile = join(layout.worktreesDir, ".gitignore");
+    if (!existsSync(ignoreFile)) writeFileSync(ignoreFile, "*\n");
+  }
+}
+
 function createWorktree(
   env: WorktreeEnv,
   layout: Layout,
@@ -308,7 +316,7 @@ function createWorktree(
   let added = false;
   try {
     const port = withCreateLock(layout, () => {
-      mkdirSync(layout.worktreesDir, { recursive: true });
+      ensureWorktreesDir(layout);
       git(layout.mainRoot, "worktree", "add", ...(existed ? [root, branch] : [root, "-b", branch, from]));
       added = true;
       const taken = new Set([...registeredPorts(layout).values(), ...[...env.procs.listening().values()].flat()]);

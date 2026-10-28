@@ -216,12 +216,20 @@ export function worktreeNew(env, opts) {
         throw new Error(`[worktree] 目标已存在：${root}`);
     return createWorktree(env, layout, root, opts.branch, opts.from ?? env.config.base, new Set(isolate));
 }
+function ensureWorktreesDir(layout) {
+    mkdirSync(layout.worktreesDir, { recursive: true });
+    if (isInside(layout.worktreesDir, layout.mainRoot)) {
+        const ignoreFile = join(layout.worktreesDir, ".gitignore");
+        if (!existsSync(ignoreFile))
+            writeFileSync(ignoreFile, "*\n");
+    }
+}
 function createWorktree(env, layout, root, branch, from, isolate) {
     const existed = branchExists(layout.mainRoot, branch);
     let added = false;
     try {
         const port = withCreateLock(layout, () => {
-            mkdirSync(layout.worktreesDir, { recursive: true });
+            ensureWorktreesDir(layout);
             git(layout.mainRoot, "worktree", "add", ...(existed ? [root, branch] : [root, "-b", branch, from]));
             added = true;
             const taken = new Set([...registeredPorts(layout).values(), ...[...env.procs.listening().values()].flat()]);
