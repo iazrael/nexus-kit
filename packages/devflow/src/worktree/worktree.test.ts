@@ -153,29 +153,40 @@ function submoduleHarness() {
   return { ...h, parent, sub, parentState, env: (cwd = sub) => h.env(cwd), wtDir };
 }
 
+function yieldLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 50));
+}
+
 describe("子模块工作树", () => {
   it.each(["主工作区", "关联工作树"])(
     "从%s建树、快进合入和回收，父仓库引用与暂存区不变",
-    (caller) => {
+    async (caller) => {
       const h = submoduleHarness();
+      await yieldLoop();
       const before = h.parentState();
       expect(worktreeList(h.env())[0]).toBe(`${h.sub}  [main]  主仓库（预览端口 4173）`);
       const { root } = worktreeNew(h.env(), { branch: "feat/submodule" });
+      await yieldLoop();
       expect(root).toBe(join(h.wtDir, "submodule"));
       expect(readlinkSync(join(root, ".build-number"))).toBe(join(h.sub, ".build-number"));
       mkdirSync(join(root, "nested"));
       const env = h.env(caller === "主工作区" ? h.sub : join(root, "nested"));
       expect(worktreeList(env)[0]).toContain(h.sub);
       const second = worktreeNew(env, { branch: "feat/second" });
+      await yieldLoop();
       expect(second.root).toBe(join(h.wtDir, "second"));
       commitIn(root, "submodule-change");
+      await yieldLoop();
       const head = git(root, "rev-parse", "HEAD");
       expect(worktreeMerge(env, "feat/submodule")).toBe("ff");
+      await yieldLoop();
       expect(git(h.sub, "rev-parse", "HEAD")).toBe(head);
       expect(h.runs.at(-1)).toEqual({ line: "verify", cwd: h.sub });
       expect(h.parentState()).toEqual(before);
       worktreeRemove(h.env(), "submodule", { force: false });
+      await yieldLoop();
       worktreeRemove(h.env(), "second", { force: false });
+      await yieldLoop();
       expect(existsSync(root)).toBe(false);
       expect(worktreeList(h.env())).toHaveLength(1);
       expect(h.parentState()).toEqual(before);
