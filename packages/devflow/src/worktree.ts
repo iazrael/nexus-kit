@@ -180,14 +180,25 @@ interface Layout {
 
 function layoutOf(env: WorktreeEnv): Layout {
   const commonDir = realpathSync(git(env.cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"));
-  const mainRoot = dirname(commonDir);
+  let mainRoot = dirname(commonDir);
+  if (basename(commonDir) !== ".git") {
+    // 子模块的公共目录在父仓库内；core.worktree 相对于该公共目录定位主工作区。
+    const configuredRoot = git(env.cwd, "config", "--local", "--default", "", "--get", "core.worktree");
+    if (configuredRoot === "") throw new Error("[worktree] 缺少主工作区路径，拒绝操作其他仓库");
+    mainRoot = realpathSync(resolve(commonDir, configuredRoot));
+    const mainCommonDir = realpathSync(git(mainRoot, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    if (mainCommonDir !== commonDir) throw new Error("[worktree] 无法确认主工作区：Git 公共目录不匹配，拒绝操作其他仓库");
+  }
   const worktreesDir =
     env.config.dir === null ? resolve(mainRoot, "..", `${basename(mainRoot)}-worktrees`) : resolve(mainRoot, env.config.dir);
   return { mainRoot, commonDir, worktreesDir };
 }
 
 function worktrees(layout: Layout): WorktreeEntry[] {
-  return parseWorktreeList(git(layout.mainRoot, "worktree", "list", "--porcelain"));
+  // Git 对子模块把元数据目录列为第一条路径，主工作区以已核验的布局为准。
+  return parseWorktreeList(git(layout.mainRoot, "worktree", "list", "--porcelain")).map((wt) =>
+    wt.main ? { ...wt, path: layout.mainRoot } : wt,
+  );
 }
 
 function registeredPorts(layout: Layout): Map<string, number> {

@@ -48,13 +48,12 @@ if (["early-session", "mismatch-final", "multiple-session", "early-hard"].includ
     if (scenario === "multiple-session") setTimeout(() => emit(ocFresh, ""), 50);
   } else {
     writeFileSync(logFile, `GetConversationDetail: found conversation 5da7df16-fef9-4055-a94d-a39363b6eeac\nCreated conversa`);
-    setTimeout(
-      () =>
-        appendFileSync(
-          logFile,
-          `tion ${earlyId}\nCreated conversation ${scenario === "multiple-session" ? "5da7df16-fef9-4055-a94d-a39363b6eeac" : earlyId}\n`,
-        ),
-      50,
+    // 先完成启动日志分片，避免下面同步建树阻塞定时器，硬期限到达时仍只有半行。
+    // early-session 留出超过一次 100ms 扫描的半行窗口；硬中断场景保持 50ms。
+    await new Promise((resolve) => setTimeout(resolve, scenario === "early-session" ? 150 : 50));
+    appendFileSync(
+      logFile,
+      `tion ${earlyId}\nCreated conversation ${scenario === "multiple-session" ? "5da7df16-fef9-4055-a94d-a39363b6eeac" : earlyId}\n`,
     );
   }
 }

@@ -130,6 +130,99 @@ function harness(over: Partial<WorktreeConfig> = {}, failOn: (line: string) => b
   return { ...repo, logs, runs, procs, env, wtDir };
 }
 
+/** 真子模块：Git 元数据在父仓库内，主工作区路径含空格。 */
+function submoduleHarness() {
+  const h = harness();
+  const parent = newRepo().main;
+  git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", h.main, "vendor/child app");
+  git(parent, "commit", "-q", "-am", "add submodule");
+  const sub = join(parent, "vendor/child app");
+  git(sub, "config", "user.email", "t@nexus.local");
+  git(sub, "config", "user.name", "t");
+  git(sub, "config", "core.hooksPath", h.hooks);
+  writeFileSync(join(sub, ".build-number"), "7\n");
+  mkdirSync(join(sub, "research"));
+  writeFileSync(join(sub, "research/doc.md"), "档案\n");
+  const parentState = () => ({
+    head: git(parent, "rev-parse", "HEAD"),
+    refs: git(parent, "for-each-ref", "--format=%(refname) %(objectname)"),
+    index: git(parent, "ls-files", "--stage"),
+    modules: readFileSync(join(parent, ".gitmodules"), "utf8"),
+  });
+  return { ...h, parent, sub, parentState, env: (cwd = sub) => h.env(cwd), wtDir: join(parent, "vendor/child app-worktrees") };
+}
+
+describe("子模块工作树", () => {
+  it.each(["主工作区", "关联工作树"])("从%s建树、快进合入和回收，父仓库引用与暂存区不变", (caller) => {
+    const h = submoduleHarness();
+    const before = h.parentState();
+    expect(worktreeList(h.env())[0]).toBe(`${h.sub}  [main]  主仓库（预览端口 4173）`);
+    const { root } = worktreeNew(h.env(), { branch: "feat/submodule" });
+    expect(root).toBe(join(h.wtDir, "submodule"));
+    expect(readlinkSync(join(root, ".build-number"))).toBe(join(h.sub, ".build-number"));
+    mkdirSync(join(root, "nested"));
+    const env = h.env(caller === "主工作区" ? h.sub : join(root, "nested"));
+    expect(worktreeList(env)[0]).toContain(h.sub);
+    const second = worktreeNew(env, { branch: "feat/second" });
+    expect(second.root).toBe(join(h.wtDir, "second"));
+    commitIn(root, "submodule-change");
+    const head = git(root, "rev-parse", "HEAD");
+    expect(worktreeMerge(env, "feat/submodule")).toBe("ff");
+    expect(git(h.sub, "rev-parse", "HEAD")).toBe(head);
+    expect(h.runs.at(-1)).toEqual({ line: "verify", cwd: h.sub });
+    expect(h.parentState()).toEqual(before);
+    worktreeRemove(h.env(), "submodule", { force: false });
+    worktreeRemove(h.env(), "second", { force: false });
+    expect(existsSync(root)).toBe(false);
+    expect(worktreeList(h.env())).toHaveLength(1);
+    expect(h.parentState()).toEqual(before);
+  });
+
+  it("子模块主工作区不干净时拒绝合入，未提交文件阻止回收", () => {
+    const h = submoduleHarness();
+    const before = h.parentState();
+    const { root } = worktreeNew(h.env(), { branch: "feat/dirty-submodule" });
+    commitIn(root, "submodule-change");
+    writeFileSync(join(h.sub, "a.txt"), "local edit\n");
+    expect(() => worktreeMerge(h.env(), "feat/dirty-submodule")).toThrow(/工作区不干净/);
+    expect(readFileSync(join(h.sub, "a.txt"), "utf8")).toBe("local edit\n");
+    writeFileSync(join(root, "keep.txt"), "keep\n");
+    expect(() => worktreeRemove(h.env(), "dirty-submodule", { force: false })).toThrow(/keep.txt/);
+    expect(existsSync(root)).toBe(true);
+    expect(h.parentState()).toEqual(before);
+  });
+
+  it("Claude 钩子在子模块里建树与回收，只删除子模块已合入的工作树分支", () => {
+    const h = submoduleHarness();
+    const before = h.parentState();
+    const root = hookCreate(h.env(), { name: "submodule-agent" });
+    expect(root).toBe(join(h.wtDir, "submodule-agent"));
+    expect(git(root, "rev-parse", "HEAD")).toBe(git(h.sub, "rev-parse", "HEAD"));
+    hookRemove(h.env(), { worktree_path: root });
+    expect(existsSync(root)).toBe(false);
+    expect(git(h.sub, "branch", "--list", "worktree-submodule-agent")).toBe("");
+    expect(h.parentState()).toEqual(before);
+  });
+
+  it("子模块缺少主工作区路径时拒绝建树，不回退到父仓库", () => {
+    const h = submoduleHarness();
+    const before = h.parentState();
+    git(h.sub, "config", "--unset", "core.worktree");
+    expect(() => worktreeNew(h.env(), { branch: "feat/missing-worktree" })).toThrow(/主工作区/);
+    expect(h.parentState()).toEqual(before);
+    expect(git(h.parent, "branch", "--list", "feat/missing-worktree")).toBe("");
+  });
+
+  it("子模块主工作区指向父仓库时拒绝操作", () => {
+    const h = submoduleHarness();
+    const before = h.parentState();
+    git(h.sub, "config", "core.worktree", h.parent);
+    expect(() => worktreeNew(h.env(), { branch: "feat/wrong-worktree" })).toThrow(/公共目录不匹配/);
+    expect(h.parentState()).toEqual(before);
+    expect(git(h.parent, "branch", "--list", "feat/wrong-worktree")).toBe("");
+  });
+});
+
 describe("worktree new", () => {
   it("建在主仓库同级目录、自主干新建分支、共享项软链回主仓库、登记端口、跑 postCreate", () => {
     const h = harness();
