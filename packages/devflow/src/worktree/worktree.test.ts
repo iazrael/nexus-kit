@@ -154,30 +154,34 @@ function submoduleHarness() {
 }
 
 describe("子模块工作树", () => {
-  it.each(["主工作区", "关联工作树"])("从%s建树、快进合入和回收，父仓库引用与暂存区不变", (caller) => {
-    const h = submoduleHarness();
-    const before = h.parentState();
-    expect(worktreeList(h.env())[0]).toBe(`${h.sub}  [main]  主仓库（预览端口 4173）`);
-    const { root } = worktreeNew(h.env(), { branch: "feat/submodule" });
-    expect(root).toBe(join(h.wtDir, "submodule"));
-    expect(readlinkSync(join(root, ".build-number"))).toBe(join(h.sub, ".build-number"));
-    mkdirSync(join(root, "nested"));
-    const env = h.env(caller === "主工作区" ? h.sub : join(root, "nested"));
-    expect(worktreeList(env)[0]).toContain(h.sub);
-    const second = worktreeNew(env, { branch: "feat/second" });
-    expect(second.root).toBe(join(h.wtDir, "second"));
-    commitIn(root, "submodule-change");
-    const head = git(root, "rev-parse", "HEAD");
-    expect(worktreeMerge(env, "feat/submodule")).toBe("ff");
-    expect(git(h.sub, "rev-parse", "HEAD")).toBe(head);
-    expect(h.runs.at(-1)).toEqual({ line: "verify", cwd: h.sub });
-    expect(h.parentState()).toEqual(before);
-    worktreeRemove(h.env(), "submodule", { force: false });
-    worktreeRemove(h.env(), "second", { force: false });
-    expect(existsSync(root)).toBe(false);
-    expect(worktreeList(h.env())).toHaveLength(1);
-    expect(h.parentState()).toEqual(before);
-  }, 60_000);
+  it.each(["主工作区", "关联工作树"])(
+    "从%s建树、快进合入和回收，父仓库引用与暂存区不变",
+    (caller) => {
+      const h = submoduleHarness();
+      const before = h.parentState();
+      expect(worktreeList(h.env())[0]).toBe(`${h.sub}  [main]  主仓库（预览端口 4173）`);
+      const { root } = worktreeNew(h.env(), { branch: "feat/submodule" });
+      expect(root).toBe(join(h.wtDir, "submodule"));
+      expect(readlinkSync(join(root, ".build-number"))).toBe(join(h.sub, ".build-number"));
+      mkdirSync(join(root, "nested"));
+      const env = h.env(caller === "主工作区" ? h.sub : join(root, "nested"));
+      expect(worktreeList(env)[0]).toContain(h.sub);
+      const second = worktreeNew(env, { branch: "feat/second" });
+      expect(second.root).toBe(join(h.wtDir, "second"));
+      commitIn(root, "submodule-change");
+      const head = git(root, "rev-parse", "HEAD");
+      expect(worktreeMerge(env, "feat/submodule")).toBe("ff");
+      expect(git(h.sub, "rev-parse", "HEAD")).toBe(head);
+      expect(h.runs.at(-1)).toEqual({ line: "verify", cwd: h.sub });
+      expect(h.parentState()).toEqual(before);
+      worktreeRemove(h.env(), "submodule", { force: false });
+      worktreeRemove(h.env(), "second", { force: false });
+      expect(existsSync(root)).toBe(false);
+      expect(worktreeList(h.env())).toHaveLength(1);
+      expect(h.parentState()).toEqual(before);
+    },
+    60_000,
+  );
 
   it("子模块主工作区不干净时拒绝合入，未提交文件阻止回收", () => {
     const h = submoduleHarness();
