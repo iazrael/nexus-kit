@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { changelogGate } from "./changelog/check-changelog.js";
-import { loadNexusConfig, loadNexusConfigAt } from "./config/config.js";
+import { loadChangelogConfig, loadNexusConfig, loadNexusConfigAt } from "./config/config.js";
 import { auditDocs } from "./docs/docs-audit.js";
 import { installHooks, outdatedHooks } from "./hooks/hooks.js";
 function git(args, cwd) {
@@ -202,24 +202,15 @@ async function main(cmd) {
             return 0;
         }
         case "check-changelog": {
-            let staged;
-            let diff;
-            try {
-                const cfg = loadNexusConfig();
-                staged = git(["-c", "core.quotepath=false", "diff", "--cached", "--name-only", "-z"]).split("\0").filter(Boolean);
-                diff = git(["-c", "core.quotepath=false", "diff", "--cached", "-U0", "--", resolve(cfg.repoRoot, cfg.changelog.path)]);
-                const verdict = changelogGate({ staged, changelogDiff: diff, sourceDirs: cfg.changelog.sourceDirs });
-                if (!verdict.ok) {
-                    console.error(verdict.message);
-                    return 1;
-                }
-                return 0;
+            const cfg = loadChangelogConfig();
+            const staged = git(["-c", "core.quotepath=false", "diff", "--cached", "--name-only", "-z"]).split("\0").filter(Boolean);
+            const diff = git(["-c", "core.quotepath=false", "diff", "--cached", "-U0", "--", resolve(cfg.repoRoot, cfg.changelog.path)]);
+            const verdict = changelogGate({ staged, changelogDiff: diff, sourceDirs: cfg.changelog.sourceDirs });
+            if (!verdict.ok) {
+                console.error(verdict.message);
+                return 1;
             }
-            catch (error) {
-                // git 不可用 / 非提交场景放行，但如实说明（不静默）
-                console.warn(`[check-changelog] 跳过：${String(error).slice(0, 200)}`);
-                return 0;
-            }
+            return 0;
         }
         case "install-hooks": {
             const cfg = loadNexusConfig();

@@ -77,6 +77,7 @@ export declare const DEFAULT_PRIVATE_REQUIRED: string[];
 /** 发版链默认步骤：完成标准 → 构建 → 部署（部署自带冒烟与失败回滚） */
 export declare const DEFAULT_RELEASE_STEPS: string[][];
 export declare function parseNexusConfig(raw: unknown, repoRoot: string, env?: NodeJS.ProcessEnv): NexusConfig;
-/** 只读 dir 下的配置，不向上查找：合入后重读主仓库配置时，不能借用上级目录里别的项目的配置 */
+/** 只读 dir 下的配置，不向上查找：合入后不能借用上级目录里别的项目的配置。 */
 export declare function loadNexusConfigAt(dir: string, env?: NodeJS.ProcessEnv): NexusConfig;
 export declare function loadNexusConfig(cwd?: string, env?: NodeJS.ProcessEnv): NexusConfig;
+export declare function loadChangelogConfig(cwd?: string): Pick<NexusConfig, "repoRoot" | "changelog">;

@@ -150,9 +150,7 @@ export const DEFAULT_RELEASE_STEPS: string[][] = [
 
 export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.ProcessEnv = {}): NexusConfig {
   if (!isObj(raw)) throw new Error("[nexus.config] 顶层必须是对象");
-  const cl = raw.changelog === undefined ? {} : raw.changelog;
   const docs = raw.docs === undefined ? {} : raw.docs;
-  if (!isObj(cl)) throw new Error("[nexus.config] changelog 必须是对象");
   if (!isObj(docs)) throw new Error("[nexus.config] docs 必须是对象");
   const appRoot = str(raw, "appRoot", "", ".");
 
@@ -230,10 +228,7 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
   return {
     repoRoot,
     appRoot,
-    changelog: {
-      path: str(cl, "path", "changelog", join(appRoot, "CHANGELOG.md")),
-      sourceDirs: strList(cl, "sourceDirs", "changelog", [join(appRoot, "src") + "/"]),
-    },
+    changelog: parseChangelogConfig(raw),
     docs: {
       root: str(docs, "root", "docs", "docs"),
       archiveDir: str(docs, "archiveDir", "docs", "docs/存档"),
@@ -247,30 +242,48 @@ export function parseNexusConfig(raw: unknown, repoRoot: string, env: NodeJS.Pro
   };
 }
 
-/** 从 cwd 向上找 nexus.config.json；找不到抛错 */
-function readConfigFile(dir: string, env: NodeJS.ProcessEnv): NexusConfig {
-  const file = join(dir, CONFIG_FILE);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(file, "utf8"));
-  } catch (error) {
-    throw new Error(`[nexus.config] ${file} 不是合法 JSON：${String(error).slice(0, 120)}`, { cause: error });
-  }
-  return parseNexusConfig(raw, dir, env);
+/** CHANGELOG 门禁只消费应用根与 changelog 段，不校验任务、部署等无关配置。 */
+function parseChangelogConfig(raw: Obj): NexusConfig["changelog"] {
+  const appRoot = str(raw, "appRoot", "", ".");
+  const cl = section(raw, "changelog");
+  return {
+    path: str(cl, "path", "changelog", join(appRoot, "CHANGELOG.md")),
+    sourceDirs: strList(cl, "sourceDirs", "changelog", [join(appRoot, "src") + "/"]),
+  };
 }
 
-/** 只读 dir 下的配置，不向上查找：合入后重读主仓库配置时，不能借用上级目录里别的项目的配置 */
+function readConfigFile(dir: string): unknown {
+  const file = join(dir, CONFIG_FILE);
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as unknown;
+  } catch (error) {
+    throw new Error(`[nexus.config] ${file} 无法读取或不是合法 JSON：${String(error).slice(0, 120)}`, { cause: error });
+  }
+}
+
+/** 只读 dir 下的配置，不向上查找：合入后不能借用上级目录里别的项目的配置。 */
 export function loadNexusConfigAt(dir: string, env: NodeJS.ProcessEnv = process.env): NexusConfig {
   if (!existsSync(join(dir, CONFIG_FILE))) throw new Error(`[nexus.config] ${join(dir, CONFIG_FILE)} 不存在`);
-  return readConfigFile(dir, env);
+  return parseNexusConfig(readConfigFile(dir), dir, env);
 }
 
-export function loadNexusConfig(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): NexusConfig {
+function findConfigDir(cwd: string): string {
   let dir = resolve(cwd);
   for (;;) {
-    if (existsSync(join(dir, CONFIG_FILE))) return readConfigFile(dir, env);
+    if (existsSync(join(dir, CONFIG_FILE))) return dir;
     const parent = resolve(dir, "..");
     if (parent === dir) throw new Error(`[nexus.config] 从 ${cwd} 向上找不到 ${CONFIG_FILE}`);
     dir = parent;
   }
+}
+
+export function loadNexusConfig(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): NexusConfig {
+  return loadNexusConfigAt(findConfigDir(cwd), env);
+}
+
+export function loadChangelogConfig(cwd: string = process.cwd()): Pick<NexusConfig, "repoRoot" | "changelog"> {
+  const repoRoot = findConfigDir(cwd);
+  const raw = readConfigFile(repoRoot);
+  if (!isObj(raw)) throw new Error("[nexus.config] 顶层必须是对象");
+  return { repoRoot, changelog: parseChangelogConfig(raw) };
 }

@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { changelogGate } from "./changelog/check-changelog.ts";
-import { loadNexusConfig, loadNexusConfigAt } from "./config/config.ts";
+import { loadChangelogConfig, loadNexusConfig, loadNexusConfigAt } from "./config/config.ts";
 import { auditDocs } from "./docs/docs-audit.ts";
 import { installHooks, outdatedHooks } from "./hooks/hooks.ts";
 
@@ -215,24 +215,17 @@ async function main(cmd: string | undefined): Promise<number> {
       return 0;
     }
     case "check-changelog": {
-      let staged: string[];
-      let diff: string;
-      try {
-        const cfg = loadNexusConfig();
-        staged = git(["-c", "core.quotepath=false", "diff", "--cached", "--name-only", "-z"]).split("\0").filter(Boolean);
-        diff = git(["-c", "core.quotepath=false", "diff", "--cached", "-U0", "--", resolve(cfg.repoRoot, cfg.changelog.path)]);
-        const verdict = changelogGate({ staged, changelogDiff: diff, sourceDirs: cfg.changelog.sourceDirs });
-        if (!verdict.ok) {
-          console.error(verdict.message);
-          return 1;
-        }
-        return 0;
-      } catch (error) {
-        // git 不可用 / 非提交场景放行，但如实说明（不静默）
-        console.warn(`[check-changelog] 跳过：${String(error).slice(0, 200)}`);
-        return 0;
+      const cfg = loadChangelogConfig();
+      const staged = git(["-c", "core.quotepath=false", "diff", "--cached", "--name-only", "-z"]).split("\0").filter(Boolean);
+      const diff = git(["-c", "core.quotepath=false", "diff", "--cached", "-U0", "--", resolve(cfg.repoRoot, cfg.changelog.path)]);
+      const verdict = changelogGate({ staged, changelogDiff: diff, sourceDirs: cfg.changelog.sourceDirs });
+      if (!verdict.ok) {
+        console.error(verdict.message);
+        return 1;
       }
+      return 0;
     }
+
     case "install-hooks": {
       const cfg = loadNexusConfig();
       const written = installHooks(cfg.repoRoot, (args) => void git(args, cfg.repoRoot));
