@@ -1,5 +1,5 @@
 import { recordRunEnd } from "./run-end.ts";
-import { readNote, indentNote, formatSummary, checkAcceptance, clearSelfChecks } from "./deliver.ts";
+import { readNote, indentNote, clearSelfChecks } from "./deliver.ts";
 import { git, atomic } from "./io.ts";
 import type {
   ExecutorFailure,
@@ -21,7 +21,7 @@ import type { ChildProcess } from "node:child_process";
 import { loadNexusConfig, loadNexusConfigAt } from "../config/config.ts";
 import { worktreeNew } from "../worktree/worktree.ts";
 import { systemProcessProbe } from "../worktree/worktree-procs.ts";
-import { legacyTaskConfig, taskWorktree } from "./config.ts";
+import { taskWorktree } from "./config.ts";
 import {
   assertMainClean,
   beginMainAudit,
@@ -121,16 +121,57 @@ function checkInputs(root: string, spec: TaskSpec, source = false) {
     checkFingerprint(input.sha256, fingerprint(file), `输入指纹不符：${input.path}`);
   }
 }
+function checkDependencies(ctx: TaskContext, spec: TaskSpec) {
+  for (const dep of spec.dependencies) {
+    const path = join(control(ctx, dep.id), "accepted.json");
+    check(existsSync(path), `前置任务未通过：${dep.id}`);
+    const accepted = checkedAcceptance(ctx, dep.id),
+      wt = taskWorktree(ctx.mainRoot, ctx.cfg, dep.id);
+    if (existsSync(wt)) {
+      assertClean(wt);
+      check(
+        git(wt, "rev-parse", "HEAD") === accepted.acceptanceCommit && git(wt, "status", "--porcelain") === "",
+        `前置任务版本变化或存在未提交内容：${dep.id}`,
+      );
+    } else
+      check(
+        spawnSync("git", ["merge-base", "--is-ancestor", accepted.acceptanceCommit, "HEAD"], { cwd: ctx.mainRoot }).status === 0,
+        `前置验收提交尚未集成：${dep.id}`,
+      );
+    check(!dep.commit || dep.commit === accepted.verifiedCommit, `前置提交不符：${dep.id}`);
+  }
+}
 function checkDefinition(ctx: TaskContext, snap: Snapshot, root: string) {
-  const task = readTask(root, ctx.cfg, snap.spec.id);
-  checkFingerprint(snap.definition, task.definition, "任务定义已变化，需要重新派发或重新确认");
-  checkFingerprint(snap.nexusHash, fingerprint(safePath(root, "nexus.config.json")), "工作树后端配置已变化，旧派发记录失效");
-  const current = config(root),
-    legacy = legacyTaskConfig(current),
-    configHash = sha(JSON.stringify(current));
-  if (legacy === null || snap.configHash !== sha(JSON.stringify(legacy)))
-    checkFingerprint(snap.configHash, configHash, "项目配置已变化，旧派发记录失效");
-  for (const rule of snap.rules) checkFingerprint(rule.sha256, fingerprint(safePath(root, rule.path)), `公共规则已变化：${rule.path}`);
+  const task = readTask(root, config(root), snap.spec.id);
+  check(task.spec.branch === snap.spec.branch && task.spec.worktree === snap.spec.worktree, "不能更换已有任务的分支或工作树");
+  const current = task.effective;
+  check(
+    current.tasksDir === snap.config.tasksDir &&
+      current.controlDir === snap.config.controlDir &&
+      current.worktreeDir === snap.config.worktreeDir,
+    "任务目录配置已变化，不能接入原工作树和控制记录",
+  );
+  check(current.executor === snap.config.executor, "执行器已变化，不能接入原会话；请使用新任务");
+  const settings = current.executors[current.executor]!,
+    frozen = snap.config.executors[snap.config.executor]!;
+  // Models and effort may change within one session; transport and grants may not.
+  const { model: _model, effort: _effort, ...connection } = settings as typeof settings & { effort?: string };
+  const { model: _oldModel, effort: _oldEffort, ...oldConnection } = frozen as typeof frozen & { effort?: string };
+  check(
+    JSON.stringify(connection) === JSON.stringify(oldConnection) &&
+      JSON.stringify(current.executorEnvDeny) === JSON.stringify(snap.config.executorEnvDeny),
+    "执行器连接或授权配置已变化，不能接入原会话；请使用新任务",
+  );
+  if (snap.definition !== task.definition) console.error("[task] 任务定义已变化，使用当前定义；验收须匹配当前定义和提交的验证结果");
+  if (snap.nexusHash !== fingerprint(safePath(root, "nexus.config.json")))
+    console.error("[task] 项目配置已变化；已有运行仍用派发执行配置，换模型可直接使用 --model");
+  for (const rule of snap.rules) {
+    if (!existsSync(safePath(root, rule.path)) || rule.sha256 !== fingerprint(safePath(root, rule.path)))
+      console.error(`[task] 公共规则已变化：${rule.path}`);
+  }
+  checkDependencies(ctx, task.spec);
+  snap.spec = task.spec;
+  snap.definition = task.definition;
   return task;
 }
 function launchStatusError(status: string, id: string, action: string): string {
@@ -151,24 +192,7 @@ function prepare(ctx: TaskContext, id: string, refresh = false): Snapshot {
     const ignored = spawnSync("git", ["check-ignore", "--quiet", "--", input.path], { cwd: ctx.root }).status === 0;
     check(ignored, `输入 ${input.path} 既未提交也未被 Git 忽略；复制进任务树后会成为未提交改动，先把它加入 .gitignore`);
   }
-  for (const dep of task.spec.dependencies) {
-    const path = join(control(ctx, dep.id), "accepted.json");
-    check(existsSync(path), `前置任务未通过：${dep.id}`);
-    const accepted = checkedAcceptance(ctx, dep.id),
-      wt = taskWorktree(ctx.mainRoot, ctx.cfg, dep.id);
-    if (existsSync(wt)) {
-      assertClean(wt);
-      check(
-        git(wt, "rev-parse", "HEAD") === accepted.acceptanceCommit && git(wt, "status", "--porcelain") === "",
-        `前置任务版本变化或存在未提交内容：${dep.id}`,
-      );
-    } else
-      check(
-        spawnSync("git", ["merge-base", "--is-ancestor", accepted.acceptanceCommit, "HEAD"], { cwd: ctx.mainRoot }).status === 0,
-        `前置验收提交尚未集成：${dep.id}`,
-      );
-    check(!dep.commit || dep.commit === accepted.verifiedCommit, `前置提交不符：${dep.id}`);
-  }
+  checkDependencies(ctx, task.spec);
   // The control directory must be ignored, otherwise launch metadata dirties main.
   const probe = relative(ctx.mainRoot, join(control(ctx, id), "definition.json"));
   const ignored = spawnSync("git", ["check-ignore", "--quiet", probe], { cwd: ctx.mainRoot });
@@ -201,6 +225,7 @@ function prepare(ctx: TaskContext, id: string, refresh = false): Snapshot {
         return snap;
       }
       check(realpathSync(ctx.root) === realpathSync(oldTree), "重新确认必须在原任务工作树执行");
+      checkDefinition(ctx, old, ctx.root);
       check(["返工", "中断", "受阻", "执行中"].includes(task.status), "当前状态不能重新确认");
       check(old.spec.branch === snap.spec.branch && old.spec.worktree === snap.spec.worktree, "重新确认不能更换任务分支或工作树");
       const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", old.base, "HEAD"], { cwd: ctx.root });
@@ -212,7 +237,6 @@ function prepare(ctx: TaskContext, id: string, refresh = false): Snapshot {
       return snap;
     }
     checkDefinition(ctx, old, existsSync(worktree(ctx, old)) ? worktree(ctx, old) : ctx.root);
-    checkFingerprint(old.definition, snap.definition, "旧任务定义不同，保留现场并由协调者处理");
     return old;
   }
   return snap;
@@ -544,13 +568,20 @@ function executorFailureNote(id: string, failure: ExecutorFailure): string {
   const chars = Array.from(printable(`${failure.type}：${failure.message}`).trim());
   const note = `；执行器最后一条报错 ${chars.length > 300 ? `${chars.slice(0, 300).join("")}…` : chars.join("")}`;
   return failure.type === "provider.quota"
-    ? `${note}；等额度恢复或换模型：已建树在任务树执行 task resume ${id} --refresh-definition --model <模型>，建树前失败在主仓执行 task dispatch ${id} --refresh-definition --model <模型>`
+    ? `${note}；等额度恢复或换模型：已建树在任务树执行 task resume ${id} --model <模型>，建树前失败在主仓执行 task dispatch ${id} --model <模型>`
     : note;
 }
 function promptFor(ctx: TaskContext, snap: Snapshot, resume: boolean) {
   const id = snap.spec.id,
     tool = `${JSON.stringify(process.execPath)} ${JSON.stringify(toolCli())} task`;
-  return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，直接按已批准范围续跑。" : "执行已分配的独立任务。"}\n任务：${ctx.cfg.tasksDir}/${id}.md\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n目标：${snap.spec.goal}\n先读任务文件和公共规则 ${ctx.cfg.rules.join("、")}，再执行 ${tool} start ${id} --owner ${snap.config.executor} 自建或恢复工作树（工具启动目录：${snap.sourceRoot}）。\n派发表示已批准任务文件列出的范围：范围内直接实施，不要结束回合等待重复批准；需要扩范围、改验收目标或新增未授权动作时，保存证据交回协调者。\n预算 ${snap.config.budgetMinutes} 分钟是进度检查节点，不是硬期限。\n交付：按验收清单逐条自验，在「自验结果」列写「通过：证据」或「不适用：理由」并提交，再在工作树内执行 ${tool} deliver ${id} --summary-file <工作树外的摘要文件>（三行：改了什么、验证如何、还有什么）；它会复跑验证命令、追加交付摘要并标待验收。做不到时执行 ${tool} block ${id} --reason-file <工作树外的文件> 登记受阻。最终回复给交付 SHA 并复述交付摘要。`;
+  const inputRoot = existsSync(worktree(ctx, snap)) ? worktree(ctx, snap) : snap.sourceRoot;
+  return `${resume ? "继续原会话与原工作树，不重建现场。上次若停在计划确认，直接按已批准范围续跑。" : "执行已分配的独立任务。"}\n任务：${taskFile(inputRoot, snap.config, id)}\n起始提交：${snap.base}\n工作树：${worktree(ctx, snap)}\n目标：${snap.spec.goal}\n先读任务文件和公共规则 ${config(
+    inputRoot,
+  )
+    .rules.map((path) => safePath(inputRoot, path))
+    .join(
+      "、",
+    )}，再执行 ${tool} start ${id} --owner ${snap.config.executor} 自建或恢复工作树（工具启动目录：${snap.sourceRoot}）。\n派发表示已批准任务文件列出的范围：范围内直接实施，不要结束回合等待重复批准；需要扩范围、改验收目标或新增未授权动作时，保存证据交回协调者。\n预算 ${snap.config.budgetMinutes} 分钟是进度检查节点，不是硬期限。\n交付：完成自验并提交，在工作树内执行 ${tool} deliver ${id} --summary-file <工作树外的摘要文件>（非空交付说明，格式自由）；它会复跑验证命令、追加交付摘要并标待验收。做不到时执行 ${tool} block ${id} --reason-file <工作树外的文件> 登记受阻。最终回复给交付 SHA 并复述交付摘要。`;
 }
 function baseRecovery(ctx: TaskContext, snap: Snapshot): string {
   return `保留原任务工作树 ${printable(worktree(ctx, snap))}；待验收任务先用 task rework ${snap.spec.id} --message-file <JSON 路径> 登记基准改写原因、复现命令和通过标准。再逐文件核对并完成变基或重放交付，在原树提交后用 task resume ${snap.spec.id} --refresh-definition 重新确认基准并交付，随后重新 verify、独立审查和 accept。仅刷新定义不能修复历史`;
@@ -668,17 +699,12 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
     noRunning(ctx, id);
     assertMainClean(ctx.mainRoot);
     const snap = options.refreshDefinition ? prepare(ctx, id, true) : resuming ? loadSnapshot(ctx, id) : prepare(ctx, id);
-    const hadSnapshot = existsSync(snapshotPath(ctx, id));
-    if (options.model !== undefined) {
-      const { name, settings } = modelOverride(snap, options.model);
-      check(
-        !hadSnapshot || options.refreshDefinition || settings.model === snap.config.executors[name]!.model,
-        `派发快照已固定模型 ${snap.config.executors[name]!.model}；换模型加 --refresh-definition 重新确认`,
-      );
-      snap.config.executors[name] = settings;
-    }
     const wt = worktree(ctx, snap);
     const task = checkDefinition(ctx, snap, existsSync(wt) ? wt : snap.sourceRoot);
+    if (options.model !== undefined) {
+      const { name, settings } = modelOverride(snap, options.model);
+      snap.config.executors[name] = settings;
+    }
     const previous = latestRun(ctx, id);
     const conversationId = resuming ? (options.conversation ?? previous?.data.conversationId ?? null) : null;
     if (resuming && task.status !== "待验收") {
@@ -695,7 +721,7 @@ function launch(ctx: TaskContext, id: string, resuming: boolean, options: RunOpt
     const checks = resuming ? undefined : preflight(ctx, id);
     const baseWarning = warnBase(ctx, snap);
     const definitionFile = snapshotPath(ctx, id);
-    if (options.refreshDefinition && existsSync(definitionFile)) {
+    if (existsSync(definitionFile) && JSON.stringify(loadSnapshot(ctx, id)) !== JSON.stringify(snap)) {
       // Archive the original bytes; loadSnapshot normalizes legacy configs.
       loadSnapshot(ctx, id);
       const archive = join(control(ctx, id), "definitions");
@@ -831,7 +857,7 @@ export async function supervise(ctx: TaskContext, id: string, directory: string)
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   try {
-    checkDefinition(ctx, snap, snap.sourceRoot);
+    checkDefinition(ctx, snap, existsSync(worktree(ctx, snap)) ? worktree(ctx, snap) : snap.sourceRoot);
     executor = executorByName(snap.config.executor);
     const executorSettings = snap.config.executors[snap.config.executor];
     check(executorSettings !== undefined, `快照缺少执行器配置段：${snap.config.executor}`);
@@ -998,29 +1024,8 @@ function delivery(ctx: TaskContext, snap: Snapshot, expected = "待验收") {
   })
     .split("\0")
     .filter(Boolean);
-  const changed: string[] = [],
-    deleted = new Set<string>();
-  for (let i = 0; i + 1 < records.length; i += 2) {
-    const status = records[i]!,
-      path = records[i + 1]!;
-    changed.push(path);
-    if (status === "D") deleted.add(path);
-  }
-  const deletable = snap.spec.deletable ?? [];
-  const forbidden = changed.filter((path) => (deleted.has(path) ? !deletable.includes(path) : !snap.spec.writable.includes(path)));
-  if (forbidden.length) {
-    const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    const range = `${snap.base}..${commit}`;
-    const details = forbidden.map((path) => {
-      const commits = git(wt, "log", "--full-history", "--no-renames", "--format=%H", range, "--", path);
-      const reason = deleted.has(path)
-        ? `删除未授权：${JSON.stringify(path)}；可写白名单不授权删除，确需删除时列入任务配置 deletable`
-        : `改动超出白名单：${JSON.stringify(path)}`;
-      return `${reason}；相关提交：${commits.split("\n").join("、")}；查看：git -C ${quote(wt)} log --full-history --no-renames --oneline ${quote(range)} -- ${quote(path)}`;
-    });
-    throw new Error(details.join("\n"));
-  }
-  for (const path of snap.spec.writable) safePath(wt, path);
+  const changed: string[] = [];
+  for (let i = 0; i + 1 < records.length; i += 2) changed.push(records[i + 1]!);
   return { wt, task, commit, changed };
 }
 /** Runs the registered verify commands, each in its own empty directory under output; audit adds main-repo audits. */
@@ -1103,6 +1108,7 @@ export async function verify(ctx: TaskContext, id: string, mainReview?: string) 
       const { wt, commit, changed } = delivery(ctx, snap);
       if (mainReview) reviewMainAudits(control(ctx, id), inputFile(ctx, mainReview));
       assertMainAuditsReviewed(control(ctx, id));
+      result.definition = snap.definition;
       result.commit = commit;
       result.changed = changed;
       const baseWarning = warnBase(ctx, snap);
@@ -1123,8 +1129,7 @@ export async function verify(ctx: TaskContext, id: string, mainReview?: string) 
   });
 }
 /**
- * Executor-side delivery gate: committed work inside the whitelist, every
- * acceptance row self-checked, the registered verify commands passing in a
+ * Executor-side delivery: committed work and the current verify commands passing in a
  * fresh directory. Only then the summary is appended and the task marked 待验收.
  */
 export async function deliver(ctx: TaskContext, id: string, summaryPath: string) {
@@ -1134,8 +1139,7 @@ export async function deliver(ctx: TaskContext, id: string, summaryPath: string)
     check(existsSync(wt), "交付工作树缺失");
     const summary = readNote(summaryPath, wt, "交付摘要");
     const { task, commit } = delivery(ctx, snap, "执行中");
-    const rows = checkAcceptance(task.content);
-    const formatted = formatSummary(summary);
+    const formatted = summary;
     const output = join(control(ctx, id), "self-checks", nonce());
     mkdirSync(output, { recursive: true });
     const file = join(output, "result.json"),
@@ -1162,7 +1166,7 @@ export async function deliver(ctx: TaskContext, id: string, summaryPath: string)
     const receipt = relative(ctx.mainRoot, file);
     const content = record(
       setHeader(task.content, "状态", "待验收"),
-      `交付摘要（验收清单 ${rows} 条已自验；自验 ${result.commands.length} 条命令通过：${receipt}；被自验提交 ${commit}）\n${indentNote(formatted)}`,
+      `交付摘要（自验 ${result.commands.length} 条命令通过：${receipt}；被自验提交 ${commit}）\n${indentNote(formatted)}`,
     );
     commitTask(ctx, snap, wt, content, `交付：${id}`);
     return { id, status: "待验收", commit: git(wt, "rev-parse", "HEAD"), verifiedCommit: commit, selfCheck: file, summary: formatted };

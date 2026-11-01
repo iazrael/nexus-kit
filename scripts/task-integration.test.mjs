@@ -126,7 +126,7 @@ function ready(root, id = "cancel-buy") {
     (spec) => {
       spec.goal = "取消不扣款";
       spec.scope = "仅取消路径";
-      spec.writable.push("artifact.txt");
+      spec.writable = ["artifact.txt"];
       spec.verify = [
         {
           name: "取消余额",
@@ -457,7 +457,7 @@ test("验证命令失败保留日志和 passed=false，不能验收", () => {
   assert.notEqual(run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD"))).status, 0);
 });
 
-test("未提交内容、越界改动、变更后的代码和缺审查阻止通过", () => {
+test("未提交内容、变更后的代码和缺审查阻止通过；新增文件可复跑", () => {
   const root = repo(),
     wt = delivered(root);
   writeFileSync(join(wt, "artifact.txt"), "dirty");
@@ -466,7 +466,7 @@ test("未提交内容、越界改动、变更后的代码和缺审查阻止通�
   writeFileSync(join(wt, "outside.txt"), "forbidden");
   git(wt, "add", ".");
   git(wt, "commit", "-m", "outside");
-  assert.match(run(root, "verify", "cancel-buy").stderr, /白名单/);
+  assert.ok(success(run(root, "verify", "cancel-buy")).changed.includes("outside.txt"));
   git(wt, "revert", "--no-edit", "HEAD");
   success(run(root, "verify", "cancel-buy"));
   const verifiedHead = git(wt, "rev-parse", "HEAD");
@@ -497,27 +497,24 @@ function deliveredWithDeletion(root, editSpec, change = (wt) => unlinkSync(join(
   return wt;
 }
 
-test("可写白名单不授权删除：删除基准已有文件必须列入 deletable", () => {
-  const root = repo();
-  deliveredWithDeletion(root, (s) => s.writable.push("guide.jpg"));
-  const rejected = run(root, "verify", "cancel-buy");
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /删除未授权："guide\.jpg"/);
-  assert.match(rejected.stderr, /deletable/);
-  assert.notEqual(run(root, "accept", "cancel-buy", "--review", review(root, "0".repeat(40))).status, 0);
+test("旧任务未声明 deletable 也可以删除并验收", () => {
+  const root = repo(),
+    wt = deliveredWithDeletion(root, (s) => s.writable.push("guide.jpg"));
+  const verified = success(run(root, "verify", "cancel-buy"));
+  assert.ok(verified.changed.includes("guide.jpg"));
+  success(run(root, "accept", "cancel-buy", "--review", review(root, git(wt, "rev-parse", "HEAD"))));
 });
 
-test("重命名按删除旧路径处理：旧路径未列入 deletable 时拒绝", () => {
+test("旧任务重命名不需要额外删除授权", () => {
   const root = repo();
   deliveredWithDeletion(
     root,
     (s) => s.writable.push("guide.jpg", "guide-renamed.jpg"),
     (wt) => git(wt, "mv", "guide.jpg", "guide-renamed.jpg"),
   );
-  const rejected = run(root, "verify", "cancel-buy");
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /删除未授权："guide\.jpg"/);
-  assert.doesNotMatch(rejected.stderr, /guide-renamed\.jpg/);
+  const verified = success(run(root, "verify", "cancel-buy"));
+  assert.ok(verified.changed.includes("guide.jpg"));
+  assert.ok(verified.changed.includes("guide-renamed.jpg"));
 });
 
 test("未声明 deletable 的任务配置字段与顺序不变，定义指纹不受新字段影响", async () => {
@@ -546,32 +543,13 @@ test("未声明 deletable 的任务配置字段与顺序不变，定义指纹不
   assert.deepEqual(Object.keys(declared), [...legacyKeys.slice(0, 7), "deletable", ...legacyKeys.slice(7)]);
 });
 
-test("deletable 声明的删除可以验收，路径越界或指向自身任务文件被拒", () => {
-  const allowed = repo();
-  deliveredWithDeletion(allowed, (s) => {
-    s.deletable = ["guide.jpg"];
+test("旧的 writable 和 deletable 仅作元数据，不校验授权路径", () => {
+  const root = repo();
+  deliveredWithDeletion(root, (s) => {
+    s.writable = ["old/**"];
+    s.deletable = ["../obsolete", "tasks/cancel-buy.md"];
   });
-  assert.equal(success(run(allowed, "verify", "cancel-buy")).passed, true);
-
-  for (const [bad, message] of [
-    [["../outside.txt"], /路径|越界|outside/],
-    [["tasks/cancel-buy.md"], /不能删除自己的任务文件/],
-    [["guide.jpg", "guide.jpg"], /重复/],
-  ]) {
-    const root = repo();
-    success(run(root, "new", "cancel-buy", "--title", "删除范围"));
-    editTask(root, (s) => {
-      s.goal = "删除范围校验";
-      s.scope = "仅校验";
-      s.verify = [{ name: "noop", argv: [process.execPath, "-e", ""] }];
-      s.deletable = bad;
-    });
-    git(root, "add", ".");
-    git(root, "commit", "-m", "bad deletable");
-    const result = run(root, "start", "cancel-buy", "--owner", "执行者");
-    assert.notEqual(result.status, 0, JSON.stringify(bad));
-    assert.match(result.stderr, message);
-  }
+  assert.equal(success(run(root, "verify", "cancel-buy")).passed, true);
 });
 
 test("路径软链、坏配置、缺 goal 和未知命令有明确失败", () => {
@@ -585,7 +563,7 @@ test("路径软链、坏配置、缺 goal 和未知命令有明确失败", () =>
   assert.match(run(root, "dispatch", "cancel-buy", "--dry-run").stderr, /goal/);
   editTask(root, (s) => {
     s.goal = "cancel";
-    s.writable.push(".git/config");
+    s.inputs = [{ path: ".git/config", sha256: "0".repeat(64) }];
   });
   assert.match(run(root, "dispatch", "cancel-buy", "--dry-run").stderr, /禁止(写入|访问)/);
   assert.notEqual(run(root, "unknown", "cancel-buy").status, 0);
@@ -679,16 +657,20 @@ test("预建同任务树也必须认领并保存基准，旧树不能假装恢�
   assert.match(readFileSync(taskPath(join(root, ".worktrees/cancel-buy")), "utf8"), /> 状态：执行中/);
 });
 
-test("后端配置漂移阻止建树，独立复跑产物被改后阻止验收", () => {
+test("普通后端配置变化只提示，独立复跑产物被改后阻止验收", async () => {
   const root = repo();
   ready(root);
   executorConfig(root);
   success(detachedScenario(root, "invalid", "dispatch", "cancel-buy"));
+  await finished(root);
   const file = join(root, "nexus.config.json"),
     altered = JSON.parse(readFileSync(file, "utf8"));
   altered.worktree.postCreate = [[process.execPath, "-e", "process.exit(0)"]];
   writeFileSync(file, JSON.stringify(altered));
-  assert.match(run(root, "start", "cancel-buy", "--owner", "executor").stderr, /后端配置/);
+  commitAll(root, "ordinary worktree config");
+  const start = run(root, "start", "cancel-buy", "--owner", "executor");
+  success(start);
+  assert.match(start.stderr, /项目配置已变化/);
   const clean = repo(),
     wt = delivered(clean),
     verified = success(run(clean, "verify", "cancel-buy"));
@@ -716,7 +698,7 @@ test("验收前置合入并回收后仍能派发下游任务", () => {
   assert.equal(run(root, "dispatch", "follow-up", "--dry-run").status, 0);
 });
 
-test("范围变更必须显式重新确认；确认后原树和原会话可继续", async () => {
+test("范围变更直接在原树和原会话继续，不必刷新定义", async () => {
   const root = repo();
   ready(root);
   executorConfig(root);
@@ -728,8 +710,10 @@ test("范围变更必须显式重新确认；确认后原树和原会话可继�
   });
   git(wt, "add", ".");
   git(wt, "commit", "-m", "approved scope");
-  assert.match(run(wt, "resume", "cancel-buy", "--conversation", "fixture-session").stderr, /定义已变化/);
-  success(detachedScenario(wt, "complete", "resume", "cancel-buy", "--conversation", "fixture-session", "--refresh-definition"));
+  const resumed = success(detachedScenario(root, "complete", "resume", "cancel-buy", "--conversation", "fixture-session"));
+  const prompt = readFileSync(join(resumed.runDir, "prompt.txt"), "utf8");
+  assert.ok(prompt.includes(`任务：${taskPath(wt)}`));
+  assert.ok(prompt.includes(join(wt, "tasks/协作规则.md")));
   assert.equal((await finished(root)).status, "待验收");
   assert.match(readFileSync(taskPath(wt), "utf8"), /取消与返回路径/);
 });
@@ -782,14 +766,16 @@ test("硬期限结束确认忽略 TERM 的后代也退出，才释放任务", as
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });
 
-test("实际软链越界与规则漂移均拒绝，验证不碰原件", async () => {
+test("输入软链越界仍拒绝，规则和普通配置漂移仅提示", async () => {
   const { symlinkSync } = await import("node:fs");
   const root = repo();
   ready(root);
   const external = mkdtempSync(join(tmpdir(), "sw-task-external-"));
   roots.push(external);
   symlinkSync(external, join(root, "linked"));
-  editTask(root, (s) => s.writable.push("linked/output.txt"));
+  editTask(root, (s) => {
+    s.inputs = [{ path: "linked/output.txt", sha256: "0".repeat(64) }];
+  });
   assert.match(run(root, "dispatch", "cancel-buy", "--dry-run").stderr, /越界/);
   assert.equal(existsSync(join(external, "output.txt")), false);
   git(root, "checkout", "--", "tasks/cancel-buy.md");
@@ -1219,25 +1205,15 @@ test("子命令拒绝不适用参数，不能静默忽略", () => {
   }
 });
 
-test("白名单越界给出相关提交与只读查看命令，不自动撤回", () => {
+test("白名单外改动进入复跑清单，代码和提交保持原样", () => {
   const root = repo(),
     wt = delivered(root);
   writeFileSync(join(wt, "outside.txt"), "one");
-  git(wt, "add", ".");
-  git(wt, "commit", "-m", "introduce outside");
-  const first = git(wt, "rev-parse", "HEAD");
-  writeFileSync(join(wt, "outside.txt"), "two");
-  git(wt, "add", ".");
-  git(wt, "commit", "-m", "modify outside");
-  const second = git(wt, "rev-parse", "HEAD");
-  const r = run(root, "verify", "cancel-buy");
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /outside.txt/);
-  assert.ok(r.stderr.includes(first));
-  assert.ok(r.stderr.includes(second));
-  assert.match(r.stderr, /查看：git/);
-  assert.equal(git(wt, "rev-parse", "HEAD"), second);
-  assert.equal(readFileSync(join(wt, "outside.txt"), "utf8"), "two");
+  commitAll(wt, "outside");
+  const head = git(wt, "rev-parse", "HEAD");
+  assert.ok(success(run(root, "verify", "cancel-buy")).changed.includes("outside.txt"));
+  assert.equal(git(wt, "rev-parse", "HEAD"), head);
+  assert.equal(readFileSync(join(wt, "outside.txt"), "utf8"), "one");
 });
 
 test("rework 拒绝索引隐藏的未提交任务内容，不把用户半成品纳入返工提交", () => {
@@ -1416,6 +1392,14 @@ test("进度采样失败会终止执行器并留下失败收尾，不能丢下 r
   git(root, "commit", "-m", "fast progress");
   const wt = success(run(root, "start", "cancel-buy", "--owner", "test")).worktree;
   const launch = success(detachedScenario(root, "sleep", "dispatch", "cancel-buy"));
+  // 等执行器真正启动后再损坏 Git，确保测的是进度采样，而非启动前检查。
+  let running;
+  for (let n = 0; n < 250; n++) {
+    running = JSON.parse(readFileSync(join(launch.runDir, "run.json"), "utf8"));
+    if (running.executorPid || running.endedAt) break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  assert.ok(running.executorPid, "执行器必须已经启动");
   const gitfile = join(wt, ".git"),
     original = readFileSync(gitfile, "utf8");
   writeFileSync(gitfile, "gitdir: /tmp/nonexistent-nexus-progress-test\n");
@@ -1933,17 +1917,11 @@ function fingerprintDiagnostic(result, label) {
   assert.match(result.stderr, label);
   assert.match(result.stderr, /期望 SHA-256 [a-f0-9]{64}；实际 SHA-256 [a-f0-9]{64}/);
 }
-test("指纹诊断覆盖公共规则、后端配置、验证材料、两路日志、产物和审计", () => {
-  for (const kind of ["rule", "config", "receipt", "stdout", "stderr", "output", "audit"]) {
+test("指纹诊断保留验证材料、两路日志、产物和审计的完整性检查", () => {
+  for (const kind of ["receipt", "stdout", "stderr", "output", "audit"]) {
     const root = repo(),
       wt = delivered(root),
       head = git(wt, "rev-parse", "HEAD");
-    if (kind === "rule" || kind === "config") {
-      const path = join(wt, kind === "rule" ? "tasks/协作规则.md" : "nexus.config.json");
-      writeFileSync(path, readFileSync(path, "utf8") + "\n");
-      fingerprintDiagnostic(run(root, "verify", "cancel-buy"), kind === "rule" ? /公共规则已变化/ : /后端配置已变化/);
-      continue;
-    }
     const verified = success(run(root, "verify", "cancel-buy"));
     const path =
       kind === "receipt"
@@ -2299,7 +2277,7 @@ test("任务可用 execution.executor 指定 opencode；agy 档位字段被拒�
   assert.match(rejected.stderr, /effort\/mode 覆盖/);
 });
 
-test("dispatch --model 覆盖冻结进快照，换模型须重新确认", async () => {
+test("dispatch --model 记录到快照，续跑可直接换模型", async () => {
   const root = repo();
   ready(root);
   executorConfig(root);
@@ -2311,23 +2289,8 @@ test("dispatch --model 覆盖冻结进快照，换模型须重新确认", async 
   assert.equal(done.run.state, "failed");
   const snapshot = JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8"));
   assert.equal(snapshot.config.executors.agy.model, "cli-model");
-  const again = run(root, "dispatch", "cancel-buy", "--model", "other-model");
-  assert.notEqual(again.status, 0);
-  assert.match(again.stderr, /refresh-definition/);
   const wt = join(root, ".worktrees/cancel-buy");
-  success(
-    detachedScenario(
-      wt,
-      "complete",
-      "resume",
-      "cancel-buy",
-      "--conversation",
-      "fixture-session",
-      "--refresh-definition",
-      "--model",
-      "other-model",
-    ),
-  );
+  success(detachedScenario(wt, "complete", "resume", "cancel-buy", "--conversation", "fixture-session", "--model", "other-model"));
   assert.equal(
     JSON.parse(readFileSync(join(root, "research/local/task-control/cancel-buy/definition.json"), "utf8")).config.executors.agy.model,
     "other-model",
@@ -2345,7 +2308,7 @@ test("opencode 失败时把最后一条报错事件接进 error，限流给出�
   assert.equal(quota.endReason, "failed");
   assert.equal(quota.exitCode, 1);
   assert.match(quota.error, /^执行器退出码 1，信号 无；执行器最后一条报错 provider\.quota：Rate limit exceeded/);
-  assert.match(quota.error, /task dispatch cancel-buy --refresh-definition --model <模型>/);
+  assert.match(quota.error, /task dispatch cancel-buy --model <模型>/);
   const notify = readFileSync(join(root, "research/local/task-control/cancel-buy/notify.log"), "utf8");
   assert.match(notify, /provider\.quota/);
 
@@ -2454,7 +2417,7 @@ test("任务级 execution.model 覆盖冻结进快照", async () => {
   );
 });
 
-test("0.7.0 旧形状快照：配置不变时直接续跑，--model 给出重新确认提示", async () => {
+test("0.7.0 旧形状快照可以直接续跑和换模型", async () => {
   const root = repo();
   ready(root);
   configure(root, (cfg) => {
@@ -2485,15 +2448,11 @@ test("0.7.0 旧形状快照：配置不变时直接续跑，--model 给出重新
   };
   snap.configHash = cryptoHash("sha256").update(JSON.stringify(snap.config)).digest("hex");
   writeFileSync(file, JSON.stringify(snap));
-  const model = run(root, "resume", "cancel-buy", "--conversation", "fixture-session", "--model", "other-model");
-  assert.notEqual(model.status, 0);
-  assert.doesNotMatch(model.stderr, /TypeError|Cannot read/);
-  assert.match(model.stderr, /refresh-definition/);
-  success(detachedScenario(root, "complete", "resume", "cancel-buy", "--conversation", "fixture-session"));
+  success(detachedScenario(root, "complete", "resume", "cancel-buy", "--conversation", "fixture-session", "--model", "other-model"));
   assert.equal((await finished(root)).run.state, "completed");
 });
 
-test("配置换新形状后，旧快照在工作树内重新确认可继续", async () => {
+test("配置换新形状不阻断旧快照，显式刷新仍可继续", async () => {
   const root = repo();
   ready(root);
   configure(root, (cfg) => {
@@ -2526,7 +2485,7 @@ test("配置换新形状后，旧快照在工作树内重新确认可继续", as
   });
   git(root, "add", ".");
   git(root, "commit", "-m", "new config shape");
-  assert.match(run(root, "resume", "cancel-buy", "--conversation", "fixture-session").stderr, /后端配置已变化|项目配置已变化/);
+  success(run(root, "dispatch", "cancel-buy", "--dry-run"));
   const wt = join(root, ".worktrees/cancel-buy");
   const resumed = success(
     await asyncRun(wt, "complete", "resume", "cancel-buy", "--conversation", "fixture-session", "--refresh-definition").result,
@@ -2635,7 +2594,7 @@ test("deliver 自验通过后追加交付摘要、置待验收并提交，协调
   const content = readFileSync(taskPath(wt), "utf8");
   assert.match(content, /> 状态：待验收/);
   const tail = content.slice(content.indexOf("## 交付与验收记录"));
-  assert.match(tail, /交付摘要[\s\S]*1\. 改了什么：取消路径不再扣款[\s\S]*2\. 验证如何：[\s\S]*3\. 还有什么：无/);
+  assert.match(tail, /交付摘要[\s\S]*改了什么：取消路径不再扣款[\s\S]*验证如何：[\s\S]*还有什么：无/);
   assert.match(tail, /自验 1 条命令通过/);
   const selfCheck = JSON.parse(readFileSync(result.selfCheck, "utf8"));
   assert.equal(selfCheck.passed, true);
@@ -2646,49 +2605,29 @@ test("deliver 自验通过后追加交付摘要、置待验收并提交，协调
   success(run(root, "accept", "cancel-buy", "--review", review(root, verified.commit)));
 });
 
-test("deliver 拒绝：未提交、缺自验结果列或条目、自验未通过、摘要缺段、复跑失败、越白名单、非执行中", () => {
+test("deliver 拒绝未提交、复跑失败和非执行中；表格、摘要格式、文件范围不拦截", () => {
   const root = repo(),
     wt = started(root);
-  const head = () => git(wt, "rev-parse", "HEAD");
-  const rejected = (pattern, summary = summaryFile(root)) => {
-    const before = head();
-    const result = run(wt, "deliver", "cancel-buy", "--summary-file", summary);
-    assert.notEqual(result.status, 0, result.stdout);
+  const rejected = (pattern) => {
+    const before = git(wt, "rev-parse", "HEAD");
+    const result = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
+    assert.notEqual(result.status, 0);
     assert.match(result.stderr, pattern);
-    assert.equal(head(), before);
-    assert.match(readFileSync(taskPath(wt), "utf8"), /> 状态：执行中/);
+    assert.equal(git(wt, "rev-parse", "HEAD"), before);
   };
-  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(join(wt, "artifact.txt"), "broken");
   rejected(/未提交/);
   commitAll(wt);
-  rejected(/验收清单没有条目/);
-  addAcceptanceRows(wt, [goodRows[0], ["A2", "并发", "不重复", "-", "-", "未完成"], ["A3", "边界", "拒绝", "-", "-", ""]]);
-  commitAll(wt, "rows");
-  rejected(/A2[\s\S]*A3|A2.*A3/);
-  writeFileSync(
-    taskPath(wt),
-    readFileSync(taskPath(wt), "utf8").replace("| 未完成 |", "| 通过：并发探针 |").replace("| - | - |  |", "| - | - | 通过：边界负例 |"),
-  );
-  commitAll(wt, "rows fixed");
-  rejected(/还有什么/, summaryFile(root, "改了什么：x\n验证如何：y"));
-  const inside = join(wt, "summary.md");
-  rejected(/工作树外/, inside);
-  writeFileSync(join(wt, "artifact.txt"), "broken");
-  commitAll(wt, "break");
-  rejected(/验证命令失败：取消余额/);
+  rejected(/验证命令失败/);
   writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
   writeFileSync(join(wt, "stray.txt"), "x");
-  commitAll(wt, "stray");
-  rejected(/改动超出白名单.*stray\.txt/);
-  git(wt, "rm", "-q", "stray.txt");
-  git(wt, "commit", "-m", "drop stray");
-  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
-  const again = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
-  assert.notEqual(again.status, 0);
-  assert.match(again.stderr, /执行中/);
+  addAcceptanceRows(wt, [["A1", "探针", "通过", "-", "-", "未填写"]]);
+  commitAll(wt, "fix");
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root, "只写一段说明")));
+  rejected(/执行中/);
 });
 
-test("deliver 拒绝旧模板：验收清单没有自验结果列时给出补列提示", () => {
+test("deliver 接受没有自验结果列的旧模板", () => {
   const root = repo(),
     wt = started(root);
   writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
@@ -2703,9 +2642,7 @@ test("deliver 拒绝旧模板：验收清单没有自验结果列时给出补列
       .replace("| --- | --- | --- | --- | --- | --- |", "| --- | --- | --- | --- | --- |\n| A1 | 跑 | 过 | x | y |"),
   );
   commitAll(wt);
-  const result = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /自验结果.*列/);
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
 });
 
 test("block 只提交任务文件并列出未提交现场；空原因拒绝", () => {
@@ -2819,7 +2756,7 @@ test("派发提示词让执行者用 deliver 交付、用 block 登记受阻，�
   const preview = success(run(root, "dispatch", "cancel-buy", "--dry-run"));
   assert.match(preview.prompt, /task deliver cancel-buy --summary-file/);
   assert.match(preview.prompt, /task block cancel-buy --reason-file/);
-  assert.match(preview.prompt, /验收清单.*自验结果/);
+  assert.match(preview.prompt, /完成自验.*task deliver/);
   assert.match(preview.prompt, /最终回复.*交付 SHA.*交付摘要/);
   assert.equal(preview.preflight, undefined);
   success(run(root, "start", "cancel-buy", "--owner", "执行者"));
@@ -2827,7 +2764,7 @@ test("派发提示词让执行者用 deliver 交付、用 block 登记受阻，�
   assert.equal("preflight" in snap.config, false);
 });
 
-test("rework 清空验收清单的自验结果，旧的通过不能直接再交付", () => {
+test("rework 清空旧的自验文字，重新交付仍须复跑命令", () => {
   const root = repo(),
     wt = started(root);
   writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
@@ -2840,9 +2777,8 @@ test("rework 清空验收清单的自验结果，旧的通过不能直接再交�
   assert.match(table, /\| A1 \| 运行取消探针 \| 余额不变 \| out\/result\.txt \| 重复取消 \| {2}\|/);
   assert.doesNotMatch(table, /^\|.*(通过：|不适用：)/m);
   success(run(root, "start", "cancel-buy", "--owner", "执行者"));
-  const again = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root));
-  assert.notEqual(again.status, 0);
-  assert.match(again.stderr, /自验未完成：A1、A2/);
+  const again = success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root)));
+  assert.equal(JSON.parse(readFileSync(again.selfCheck, "utf8")).passed, true);
 });
 
 test("残锁里登记的进程已退出时自动回收；没有进程登记的旧锁仍拒绝", () => {
@@ -3180,3 +3116,122 @@ for (const mode of ["rpc-error", "invalid-result"]) {
     }
   });
 }
+
+test("轻量协作：不声明白名单也能新增、修改、删除和重命名，并完成验收", () => {
+  const root = repo();
+  for (const name of ["modify.txt", "delete.txt", "rename.txt"]) writeFileSync(join(root, name), "base");
+  commitAll(root, "base files");
+  ready(root);
+  editTask(root, (s) => {
+    delete s.writable;
+    delete s.deletable;
+  });
+  commitAll(root, "no file grants");
+  const wt = success(run(root, "start", "cancel-buy", "--owner", "executor")).worktree;
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(join(wt, "modify.txt"), "changed");
+  unlinkSync(join(wt, "delete.txt"));
+  git(wt, "mv", "rename.txt", "renamed.txt");
+  commitAll(wt);
+  success(run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root, "取消路径已修复，探针通过。")));
+  const verified = success(run(root, "verify", "cancel-buy"));
+  for (const path of ["artifact.txt", "modify.txt", "delete.txt", "rename.txt", "renamed.txt"]) assert.ok(verified.changed.includes(path));
+  success(run(root, "accept", "cancel-buy", "--review", review(root, verified.commit)));
+});
+
+test("轻量协作：规则和普通配置变化不阻断，保留提示且验收成功", () => {
+  const root = repo(),
+    wt = started(root);
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  writeFileSync(join(wt, "tasks/协作规则.md"), "# 更新的协作规则\n");
+  configure(wt, (c) => {
+    c.budgetMinutes = 50;
+  });
+  commitAll(wt);
+  const delivered = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root, "完成"));
+  success(delivered);
+  assert.match(delivered.stderr, /规则.*变化/);
+  assert.match(delivered.stderr, /配置.*变化/);
+  const verified = success(run(root, "verify", "cancel-buy"));
+  success(run(root, "accept", "cancel-buy", "--review", review(root, verified.commit)));
+});
+
+test("轻量协作：定义变化使用当前验证命令，旧验收材料不能复用", () => {
+  const root = repo(),
+    wt = delivered(root);
+  const old = success(run(root, "verify", "cancel-buy"));
+  editTask(wt, (s) => {
+    s.goal = "校验新要求";
+    s.verify = [{ name: "新检查", argv: [process.execPath, "-e", "process.exit(7)"] }];
+  });
+  commitAll(wt, "new requirements");
+  const stale = run(root, "accept", "cancel-buy", "--review", review(root, old.commit));
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /定义不匹配|提交已变化/);
+  const failed = run(root, "verify", "cancel-buy");
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /验证命令失败：新检查/);
+  editTask(wt, (s) => {
+    s.verify[0].argv = [process.execPath, "-e", "process.exit(0)"];
+  });
+  commitAll(wt, "passing requirements");
+  const verified = success(run(root, "verify", "cancel-buy"));
+  assert.notEqual(verified.definition, old.definition);
+  assert.equal(verified.commands[0].name, "新检查");
+  success(run(root, "accept", "cancel-buy", "--review", review(root, verified.commit)));
+});
+
+test("轻量协作：分支和执行器变化仍拒绝，不误接原会话", () => {
+  for (const kind of ["branch", "executor"]) {
+    const root = repo(),
+      wt = started(root);
+    if (kind === "branch")
+      editTask(wt, (s) => {
+        s.branch = "task/other";
+      });
+    else
+      configure(wt, (c) => {
+        c.executor = "opencode";
+        c.executors.opencode = { command: ["opencode"], model: "opencode/m", permissionArgs: [] };
+      });
+    commitAll(wt);
+    const rejected = run(root, "start", "cancel-buy", "--owner", "executor");
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /分支|执行器/);
+  }
+});
+
+test("轻量协作：刷新定义不能把旧会话交给新执行器或新授权", () => {
+  for (const change of [
+    (c) => {
+      c.executor = "opencode";
+      c.executors.opencode = { command: ["opencode"], model: "opencode/m", permissionArgs: [] };
+    },
+    (c) => {
+      c.executors.agy.permissionArgs = ["--new-grant"];
+    },
+  ]) {
+    const root = repo(),
+      wt = started(root);
+    configure(wt, change);
+    commitAll(wt, "connection changed");
+    const result = run(wt, "resume", "cancel-buy", "--conversation", "fixture-session", "--refresh-definition");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /执行器.*变化/);
+    assert.equal(existsSync(join(root, "research/local/task-control/cancel-buy/runs")), false);
+  }
+});
+
+test("轻量协作：当前定义新增未验收前置时不能交付", () => {
+  const root = repo(),
+    wt = started(root);
+  editTask(wt, (s) => {
+    s.dependencies = [{ id: "never-accepted" }];
+  });
+  writeFileSync(join(wt, "artifact.txt"), "cancel-ok");
+  commitAll(wt);
+  const result = run(wt, "deliver", "cancel-buy", "--summary-file", summaryFile(root, "完成"));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /前置任务未通过/);
+  assert.match(readFileSync(taskPath(wt), "utf8"), /> 状态：执行中/);
+});

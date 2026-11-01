@@ -221,8 +221,7 @@ export declare function verify(ctx: TaskContext, id: string, mainReview?: string
     endedAt?: string;
 }>;
 /**
- * Executor-side delivery gate: committed work inside the whitelist, every
- * acceptance row self-checked, the registered verify commands passing in a
+ * Executor-side delivery: committed work and the current verify commands passing in a
  * fresh directory. Only then the summary is appended and the task marked 待验收.
  */
 export declare function deliver(ctx: TaskContext, id: string, summaryPath: string): Promise<{

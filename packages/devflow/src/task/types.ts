@@ -72,8 +72,9 @@ export interface TaskSpec {
   scope: string;
   inputs: { path: string; sha256: string; source?: string }[];
   dependencies: { id: string; commit?: string }[];
+  /** Legacy scope metadata, not an execution or delivery restriction. */
   writable: string[];
-  /** Deleting a base file needs this explicit grant; writable alone only covers add/modify. */
+  /** Legacy deletion metadata, not an authorization gate. */
   deletable?: string[];
   verify: { name: string; argv: string[]; timeoutSeconds?: number }[];
   productReviewRequired?: boolean;

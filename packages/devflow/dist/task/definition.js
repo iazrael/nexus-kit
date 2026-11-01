@@ -63,11 +63,10 @@ export function newTask(root, cfg, id, title) {
         scope: "",
         inputs: [],
         dependencies: [],
-        writable: [`${cfg.tasksDir}/${id}.md`],
         verify: [],
         productReviewRequired: false,
     };
-    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 一页摘要\n\n- 目标：\n- 起点：\n- 终点：\n- 禁止：\n- 怎么验收：\n\n## 背景与证据\n\n已证事实附来源；待证猜测单列，不得把猜测写成事实。\n\n## 设计与授权\n\n机制、方法、判断依据和已知陷阱写在这里，执行者照此实现；机制没查清先派调查任务。授权写允许改的文件和明确不做的事。\n\n## 输入与操作步骤\n\n## 验收清单\n\n执行者交付前逐条自验，在「自验结果」写「通过：证据」或「不适用：理由」；task deliver 检查每一行。\n\n| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 | 自验结果 |\n| --- | --- | --- | --- | --- | --- |\n\n## 交付物与失败处理\n\n## 任务配置\n\nverify 的 {output} 是工具预先创建的空目录。探索任务可以登记尚未实现的探针，派发前定好命令接口和通过标准。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 执行记录\n\n每阶段只记结论、检查点和下一步。\n\n## 中断恢复\n\n## 交付与验收记录\n\n执行者用 task deliver 交付，工具在这里追加交付摘要；协调者验收后登记通过。\n`;
+    const content = `# ${title}\n\n> 基准：${new Date().toISOString().slice(0, 10)}\n> 状态：待认领\n> 负责人：未认领\n> 开始时间：未开始\n\n## 一页摘要\n\n- 目标：\n- 起点：\n- 终点：\n- 禁止：\n- 怎么验收：\n\n## 背景与证据\n\n已证事实附来源；待证猜测单列，不得把猜测写成事实。\n\n## 设计与授权\n\n机制、方法、判断依据和已知陷阱写在这里，执行者照此实现；机制没查清先派调查任务。说明任务目标、范围和明确不做的事；不需要预先枚举文件。\n\n## 输入与操作步骤\n\n## 验收清单\n\n执行者交付前按任务要求自验；表格和自验结果用于人工核对，task deliver 不检查格式。\n\n| 编号 | 操作或命令 | 预期结果 | 证据 | 负例与兄弟场景 | 自验结果 |\n| --- | --- | --- | --- | --- | --- |\n\n## 交付物与失败处理\n\n## 任务配置\n\nverify 的 {output} 是工具预先创建的空目录。探索任务可以登记尚未实现的探针，派发前定好命令接口和通过标准。\n\n<!-- task-config -->\n\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\`\n<!-- /task-config -->\n\n## 执行记录\n\n每阶段只记结论、检查点和下一步。\n\n## 中断恢复\n\n## 交付与验收记录\n\n执行者用 task deliver 交付，工具在这里追加交付摘要；协调者验收后登记通过。\n`;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, content, { flag: "wx" });
     return { task: relative(root, file), id, status: "待认领" };
@@ -118,19 +117,8 @@ export function parseSpec(raw, root, cfg, id) {
     check(!branch.startsWith("-") && !branch.includes("\n"), "非法分支");
     const worktree = text(s.worktree, "worktree");
     check(worktree === taskWorktreeName(root, cfg, id), "工作树必须与任务隔离配置的位置一致");
-    const writable = stringList(s.writable, "writable");
-    writable.forEach((p) => {
-        safePath(root, p);
-        check(!p.startsWith(".worktrees") && !p.startsWith(cfg.controlDir), `禁止写入：${p}`);
-    });
-    check(writable.includes(`${cfg.tasksDir}/${id}.md`), "白名单必须包含自己的任务文件");
+    const writable = stringList(s.writable ?? [], "writable");
     const deletable = s.deletable === undefined ? undefined : stringList(s.deletable, "deletable");
-    deletable?.forEach((p) => {
-        safePath(root, p);
-        check(!p.startsWith(".worktrees") && !p.startsWith(cfg.controlDir), `禁止删除：${p}`);
-        check(p !== `${cfg.tasksDir}/${id}.md`, "不能删除自己的任务文件");
-    });
-    check(!deletable || new Set(deletable).size === deletable.length, "deletable 有重复路径");
     check(Array.isArray(s.inputs), "inputs 必须是数组");
     const inputs = s.inputs.map((value) => {
         const v = object(value, "input");
