@@ -1,6 +1,6 @@
 {
   "name": "@nexus-kit/pwa",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "PWA 运行时：SW 注册、更新检测、升级状态机、版本比对、安装引导、离线补缓存",
   "type": "module",
   "sideEffects": false,
