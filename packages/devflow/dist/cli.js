@@ -1,13 +1,9 @@
 #!/usr/bin/env node
 /**
  * nexus-devflow：工程流程命令入口（读宿主仓库根 nexus.config.json）。
- *
- *   docs-audit        活文档审计（基准行/状态行/索引登记/相对链接）
- *   check-changelog   precommit：源码有改动而 CHANGELOG 无新增条目即拒
- *   install-hooks     core.hooksPath → .githooks，写入 pre-commit
- *   deploy            部署 dist 到自有服务器（冒烟 + 自动回滚）
- *   worktree <子命令>  并行开发工作树：new / merge / rm / ls / isolate / hook-create / hook-remove
- *   release           发版一条命令（--ack 执行、--lock 手动放锁、--unlock 清锁）
+ * 每个子命令支持 --help/-h 查用法（子命令清单见下方 USAGE，注释不再重复维护）；
+ * docs-audit、check-changelog、install-hooks、deploy 是零参数命令，多余参数拒绝执行，
+ * 防止误传参数（如 --help）直接触发部署、装钩子等实际动作。
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -34,7 +30,14 @@ function listMarkdown(dir) {
     }
     return out;
 }
-const USAGE = "用法：nexus-devflow <docs-audit|check-changelog|install-hooks|deploy|worktree|release|task>";
+const USAGE = `用法：nexus-devflow <子命令>（子命令后加 --help 查详情）
+  docs-audit        活文档审计（基准行/状态行/索引登记/相对链接）
+  check-changelog   precommit：源码有改动而 CHANGELOG 无新增条目即拒
+  install-hooks     core.hooksPath → .githooks，写入 pre-commit
+  deploy            部署 dist 到自有服务器（冒烟 + 自动回滚）
+  worktree <子命令>  并行开发工作树：new / merge / rm / ls / isolate / hook-create / hook-remove
+  release           发版一条命令（--ack 执行、--lock 手动放锁、--unlock 清锁）
+  task <子命令>      多 Agent 任务派发与原会话续跑`;
 const WORKTREE_USAGE = `用法：
   nexus-devflow worktree new <分支名> [--from=<起点>] [--isolate=<共享项,共享项>]
   nexus-devflow worktree merge <分支名|工作树目录名|路径>
@@ -51,12 +54,34 @@ const WORKTREE_USAGE = `用法：
   rm       回收：先停该树起的服务与 pm2 应用，再删目录；未提交改动或不可再生的被忽略文件拒绝回收，
            确认都不要了加 --force。分支保留。
   isolate  把共享项改为本树独立：默认复制主仓库现有内容，--empty 留空。`;
+const RELEASE_USAGE = `用法：
+  nexus-devflow release                            发版前置校验（主仓库、主干、干净、落款小节、tag 未占用），不带 --ack 校验后拒绝
+  nexus-devflow release --ack                      认领/放开发版锁，实际执行发版链、打 tag 并推送
+  nexus-devflow release --lock [--ttl-min=<分钟>]   手动放发版锁（落款与评审修复合入期间冻结主干）
+  nexus-devflow release --unlock                   清除发版锁`;
+/** 零参数命令：不解析业务参数，--help/-h 打印用法退出 0，多余参数拒绝执行 */
+const NO_ARG_CMDS = new Set(["docs-audit", "check-changelog", "install-hooks", "deploy"]);
+function noArgGate(cmd, rest) {
+    if (rest.some((a) => a === "--help" || a === "-h")) {
+        console.log(USAGE);
+        return 0;
+    }
+    if (rest.length > 0) {
+        console.error(`nexus-devflow ${cmd} 不接受参数：${rest.join(" ")}\n${USAGE}`);
+        return 2;
+    }
+    return undefined;
+}
 /** 子命令输出走 stderr：钩子模式下 stdout 只许输出工作树路径 */
 function runToStderr(cmd, args, cwd) {
     execFileSync(cmd, args, { cwd, stdio: ["ignore", 2, 2] });
 }
 async function worktreeCmd(argv) {
     const [sub, ...rest] = argv;
+    if (sub === "--help" || sub === "-h") {
+        console.log(WORKTREE_USAGE);
+        return 0;
+    }
     const { values, positionals } = parseArgs({
         args: rest,
         allowPositionals: true,
@@ -133,8 +158,18 @@ async function worktreeCmd(argv) {
 async function releaseCmd(argv) {
     const { values } = parseArgs({
         args: argv,
-        options: { ack: { type: "boolean" }, lock: { type: "boolean" }, unlock: { type: "boolean" }, "ttl-min": { type: "string" } },
+        options: {
+            ack: { type: "boolean" },
+            lock: { type: "boolean" },
+            unlock: { type: "boolean" },
+            "ttl-min": { type: "string" },
+            help: { type: "boolean", short: "h" },
+        },
     });
+    if (values.help === true) {
+        console.log(RELEASE_USAGE);
+        return 0;
+    }
     const cfg = loadNexusConfig();
     const rel = await import("./release/release.js");
     const commonDir = resolve(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
@@ -181,7 +216,20 @@ async function releaseCmd(argv) {
     });
     return 0;
 }
-async function main(cmd) {
+async function main(cmd, rest) {
+    if (cmd === undefined) {
+        console.error(USAGE);
+        return 2;
+    }
+    if (cmd === "--help" || cmd === "-h") {
+        console.log(USAGE);
+        return 0;
+    }
+    if (NO_ARG_CMDS.has(cmd)) {
+        const gate = noArgGate(cmd, rest);
+        if (gate !== undefined)
+            return gate;
+    }
     switch (cmd) {
         case "docs-audit": {
             const cfg = loadNexusConfig();
@@ -246,26 +294,22 @@ async function main(cmd) {
         case "task": {
             const { taskCommand } = await import("./task/cli.js");
             try {
-                return await taskCommand(process.argv.slice(3));
+                return await taskCommand(rest);
             }
             catch (e) {
                 throw new Error(`[task] ${e instanceof Error ? e.message : String(e)}`, { cause: e });
             }
         }
         case "worktree":
-            return worktreeCmd(process.argv.slice(3));
+            return worktreeCmd(rest);
         case "release":
-            return releaseCmd(process.argv.slice(3));
-        case "--help":
-        case "-h":
-            console.log(USAGE);
-            return 0;
+            return releaseCmd(rest);
         default:
             console.error(USAGE);
             return 2;
     }
 }
-main(process.argv[2]).then((code) => process.exit(code), (error) => {
+main(process.argv[2], process.argv.slice(3)).then((code) => process.exit(code), (error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
 });
