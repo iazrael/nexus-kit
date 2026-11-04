@@ -18,5 +18,13 @@
       ["pnpm", "check"]
     ],
     "disposable": [".e2e", "templates/webapp/dist", "templates/webapp/.build-number"]
+  },
+  "release": {
+    "steps": [
+      ["pnpm", "check"],
+      ["pnpm", "e2e"]
+    ],
+    "push": true,
+    "githubRelease": false
   }
 }

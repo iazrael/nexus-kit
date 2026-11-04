@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+- 内部：kit 自身接入发版命令——根 nexus.config.json 配 release 段（steps 为 `pnpm check`、`pnpm e2e`，无 deploy），package.json 新增 `release`/`release:lock`/`release:unlock` 脚本；此后落款合入 main 当天在主仓库跑 `pnpm release --ack` 完成校验、验证、打 tag 与推送，规范 §4 第 13 条已同步。
+
 ## [0.13.0] - 2026-11-04
 
 - 新增：nexus-devflow 全部子命令支持 `--help`/`-h` 查用法；零参数命令（deploy、docs-audit、check-changelog、install-hooks）拒绝多余参数，worktree 子命令槽也识别 `--help`。误传 `--help` 或拼错参数不再被静默忽略后直接执行（此前 `deploy --help` 会真的触发部署）。

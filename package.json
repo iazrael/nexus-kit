@@ -22,6 +22,9 @@
     "dist:check": "node scripts/check-dist-fresh.ts",
     "check": "pnpm docs:check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm test:task && pnpm dist:check && node scripts/check-boot-es5.ts && pnpm -F nexus-webapp-template test && pnpm -F nexus-webapp-template build",
     "e2e": "node scripts/e2e-upgrade.ts && node scripts/e2e-diagnostics.ts && node scripts/e2e-assets.ts && node scripts/e2e-audio.ts",
+    "release": "nexus-devflow release",
+    "release:lock": "nexus-devflow release --lock",
+    "release:unlock": "nexus-devflow release --unlock",
     "init-app": "node scripts/init-app.ts",
     "install-cli": "node scripts/install-cli.ts",
     "test:task": "pnpm -F @nexus-kit/devflow build && c8 --include='packages/devflow/dist/task/**/*.js' --report-dir=coverage/task --reporter=text --reporter=json-summary --check-coverage --lines=80 --statements=80 --functions=80 --branches=80 node --test scripts/task-integration.test.mjs scripts/task-watch.test.mjs scripts/task-notify.test.mjs"
