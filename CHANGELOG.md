@@ -5,7 +5,7 @@
 
 ## [Unreleased]
 
-- 内部：kit 自身接入发版命令——根 nexus.config.json 配 release 段（steps 为 `pnpm check`、`pnpm e2e`，无 deploy），package.json 新增 `release`/`release:lock`/`release:unlock` 脚本；此后落款合入 main 当天在主仓库跑 `pnpm release --ack` 完成校验、验证、打 tag 与推送，规范 §4 第 13 条已同步。
+- 内部：kit 自身接入发版命令——根 nexus.config.json 配 release 段（steps 为 `pnpm check`、`pnpm e2e`，无 deploy），package.json 新增 `release`/`release:lock`/`release:unlock` 脚本并补上 `version` 字段（发版命令以它为发版版本号，与落款小节匹配，忘改会被前置校验拒绝）；此后落款合入 main 当天在主仓库跑 `pnpm release --ack` 完成校验、验证、打 tag 与推送，规范 §4 第 13 条已同步。
 
 ## [0.13.0] - 2026-11-04
 

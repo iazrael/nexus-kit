@@ -1,5 +1,6 @@
 {
   "name": "nexus-kit",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "engines": {
