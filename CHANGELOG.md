@@ -3,6 +3,10 @@
 源码改动必须附条目（precommit 门禁）。发布时整合 Unreleased 落款为 `## [版本号] - 日期`。
 破坏接入方的改动记「破坏性：」开头并写迁移方法；不影响接入方的记「内部：」开头。
 
+## [Unreleased]
+
+- 内部：nexus.config.json 的 release 段开启 `githubRelease`——此后发版链自动创建 GitHub Release 页面，内容取当期落款小节。
+
 ## [0.14.0] - 2026-11-12
 
 - 新增：仓库开源（MIT），见根目录 LICENSE；kit git 子目录依赖支持 https 地址（`git+https://github.com/iazrael/nexus-kit.git#v<版本>&path:/packages/<包>`），没有配置 SSH key 的消费方也能直接依赖；`pnpm init-app` 生成的项目改用 https 依赖地址。此前仅支持 git+ssh 形式。
