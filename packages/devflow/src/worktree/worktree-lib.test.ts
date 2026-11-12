@@ -1,5 +1,5 @@
 /**
- * 工作树纯逻辑单测（取材 旧项目A scripts/worktree-lib.test.mjs）：端口分配、git/lsof 输出解析、
+ * 工作树纯逻辑单测（取材自旧项目A的工作树单测）：端口分配、git/lsof 输出解析、
  * 回收残留分类、锁残留判定、并发合入提示。合入裁决用真 git 验收，见 worktree.test.ts。
  */
 import type { Dirent } from "node:fs";

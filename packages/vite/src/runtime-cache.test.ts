@@ -1,5 +1,5 @@
 /**
- * 运行时缓存分区单测（纯逻辑，mkdtemp 假树）。夹具用 旧项目A 的七分区声明——它是本机制
+ * 运行时缓存分区单测（纯逻辑，mkdtemp 假树）。夹具用旧项目A的七分区声明——它是本机制
  * 的出处，能用声明式写出来即证明通用化没有丢能力。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

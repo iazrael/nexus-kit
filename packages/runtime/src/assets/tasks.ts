@@ -1,11 +1,11 @@
 /**
- * 两个与调度器配合的小工具，取材 旧项目A load/concurrency.ts 与 load/idle.ts。
+ * 两个与调度器配合的小工具，取材自旧项目A的并发与空闲调度实现。
  */
 
 /**
  * 限并发批量执行，结果严格按输入顺序返回（后项覆盖前项的场景，顺序乱了结果就变了）。
  * 任一项抛错即整体拒绝，之后不再取新项（与串行 for await 同语义；失败那一刻已在跑的项会跑完）。串行在高延迟链路上等于「请求数 × 单次延迟」：
- * 旧项目A 真机经隧道每请求约 1 秒，34 页串行吃掉 34.7 秒。
+ * 旧项目A真机经隧道每请求约 1 秒，34 页串行吃掉 34.7 秒。
  */
 export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   if (!Number.isInteger(limit) || limit < 1) throw new RangeError(`并发数须为正整数：${String(limit)}`);

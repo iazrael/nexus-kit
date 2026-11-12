@@ -1,6 +1,6 @@
 /**
  * 音量偏好的纯函数：主音量、各总线音量（0..1）与静音。存在哪里由宿主决定（存档、localStorage），
- * 这里只管解析、钳制与「全默认不写」的序列化。取材 旧项目A load/audio.ts 与旧项目B soundEngine.ts。
+ * 这里只管解析、钳制与「全默认不写」的序列化。取材自旧项目A与旧项目B的音频实现。
  */
 
 export interface VolumePrefs {

@@ -1,5 +1,5 @@
 /**
- * 发版一条命令与发版锁（机制见 docs/架构算法/并行开发与发版.md；取材 旧项目A scripts/release.mjs）。
+ * 发版一条命令与发版锁（机制见 docs/架构算法/并行开发与发版.md；取材自旧项目A的发版脚本）。
  *
  * 发版锁 = <git 公共目录>/nexus-release.lock（JSON：version、token、ref、startedAt、expires 为 epoch 秒、pid）。
  * reference-transaction 钩子（hooks.ts）读它：锁在、未过期、事务要改锁住的主干、环境变量

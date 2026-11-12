@@ -10,7 +10,7 @@
  * - whenRunning(fn)：发声前置门，引擎挂着时先 resume、落地 running 才执行，不把音符排在冻结的时间轴上。
  * - resetSession()：iOS 停麦后输出被压到极轻而 state 仍是 running，挂起 120ms 再恢复逼系统重建会话。
  *
- * 取材 旧项目A load/audio.ts 与旧项目B soundEngine.ts / bgmEngine.ts。
+ * 取材自旧项目A与旧项目B的音频引擎实现。
  */
 import type { Logger } from "../log/store.ts";
 import { errText } from "../util.ts";

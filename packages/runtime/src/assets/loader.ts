@@ -8,7 +8,7 @@
  * - 每个调用可带 AbortSignal：取消只拒绝它自己；全部调用方都取消、且任务还在排队时才出队、不发请求。
  * - hold(关键Promise, 封顶毫秒)：关键资源有结论（成或败）或时限到之前，档位 2、3 不发。新的 hold 取代旧闸门。
  *
- * 取材 旧项目A load/asset-scheduler.ts 与 critical-gate.ts。时钟可注入，单测不碰真定时器。
+ * 取材自旧项目A的加载调度器与关键闸门实现。时钟可注入，单测不碰真定时器。
  */
 import type { Logger } from "../log/store.ts";
 
@@ -27,7 +27,7 @@ export interface GaugeRegistry {
 }
 
 export interface LoaderOptions {
-  /** 同时在飞的上限，默认 6（旧项目A 高延迟真机实测值，也是 HTTP/1.1 每域连接数的惯例） */
+  /** 同时在飞的上限，默认 6（旧项目A高延迟真机实测值，也是 HTTP/1.1 每域连接数的惯例） */
   concurrency?: number;
   /** 闸门封顶用的定时器，返回撤销函数；默认 setTimeout / clearTimeout */
   setTimer?: (fn: () => void, ms: number) => () => void;

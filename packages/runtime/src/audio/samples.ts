@@ -11,7 +11,7 @@
  * - 音乐 playMusic / stopMusic：记账「应当在响的曲子」，取号仲裁晚到的解码结果；单次曲自然播完撤销意图；回到
  *   running 与引擎重建后按意图校对重启。
  *
- * 取材 旧项目A load/audio.ts（ThrottleGate、LatestIntentGate、远音让路、补播时效、失败分级、已知缺口）。
+ * 取材自旧项目A的音频实现（ThrottleGate、LatestIntentGate、远音让路、补播时效、失败分级、已知缺口）。
  */
 import type { Loader, GaugeRegistry, Priority } from "../assets/loader.ts";
 import type { Logger } from "../log/store.ts";
