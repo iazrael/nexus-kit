@@ -3,9 +3,9 @@
 源码改动必须附条目（precommit 门禁）。发布时整合 Unreleased 落款为 `## [版本号] - 日期`。
 破坏接入方的改动记「破坏性：」开头并写迁移方法；不影响接入方的记「内部：」开头。
 
-## [0.13.1] - 2026-11-12
+## [0.14.0] - 2026-11-12
 
-- 内部：仓库转开源准备——新增 LICENSE（MIT），根与 5 个发布包 package.json 补 license 字段；README 补 License 一节；需求、总览与架构图中的「私有仓库」表述改为开源仓库（MIT）；kit 依赖地址切到 git+https；私有项目出处引用统一泛化为「旧项目A/B/C」；删除 docs/存档/ 历史快照并同步索引与活文档链接。
+- 新增：仓库开源（MIT），见根目录 LICENSE；kit git 子目录依赖支持 https 地址（`git+https://github.com/iazrael/nexus-kit.git#v<版本>&path:/packages/<包>`），没有配置 SSH key 的消费方也能直接依赖；`pnpm init-app` 生成的项目改用 https 依赖地址。此前仅支持 git+ssh 形式。
 - 内部：kit 自身接入发版命令——根 nexus.config.json 配 release 段（steps 为 `pnpm check`、`pnpm e2e`，无 deploy），package.json 新增 `release`/`release:lock`/`release:unlock` 脚本并补上 `version` 字段（发版命令以它为发版版本号，与落款小节匹配，忘改会被前置校验拒绝）；此后落款合入 main 当天在主仓库跑 `pnpm release --ack` 完成校验、验证、打 tag 与推送，规范 §4 第 13 条已同步。
 
 ## [0.13.0] - 2026-11-04
