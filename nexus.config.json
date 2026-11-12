@@ -25,6 +25,6 @@
       ["pnpm", "e2e"]
     ],
     "push": true,
-    "githubRelease": false
+    "githubRelease": true
   }
 }
