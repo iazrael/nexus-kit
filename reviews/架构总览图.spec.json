@@ -38,6 +38,6 @@
   "cards": [
     { "dot": "cyan", "title": "浏览器运行时", "items": ["pwa 与 runtime 零框架依赖：DOM、SW、Web Audio、Performance API 只在函数体内访问", "runtime 一个包、按子路径分模块，宿主只 import 用到的子路径", "pwa-react 只出 hook、不写样式"] },
     { "dot": "violet", "title": "runtime 内部依赖", "items": ["/perf 与 /lifecycle 调 /log 的 registerSection、registerAppendix", "/assets 与 /audio 只用 /perf 的 registerGauge", "/lifecycle 直接 import /boot 的 reloadLatest，与 index.html 内联兜底同源"] },
-    { "dot": "emerald", "title": "分发与版本", "items": ["私有 git 子目录依赖钉 tag，packages/*/dist 入库", "包间只用 peerDependencies，同 tag 同版本发布", "templates/webapp 兼 playground、新项目起点与 e2e 被测应用"] }
+    { "dot": "emerald", "title": "分发与版本", "items": ["git 子目录依赖钉 tag，packages/*/dist 入库", "包间只用 peerDependencies，同 tag 同版本发布", "templates/webapp 兼 playground、新项目起点与 e2e 被测应用"] }
   ]
 }

@@ -20,3 +20,7 @@ pnpm init-app ../my-app --title 我的应用   # 从模板生成新项目
 开发规则与文档索引见 [CLAUDE.md](CLAUDE.md)；为什么这样设计见 [docs/需求/需求.md](docs/需求/需求.md)。
 
 多 Agent 协作通过 `nexus-devflow task` 提供任务生成、派发、原会话续跑、返工、独立复跑和审查后验收。宿主在 nexus.config.json 显式配置 task 段；配置示例位于包内 templates/task.config.example.json，通用规则起点位于 templates/任务协作规则.md，拷贝后由宿主维护。普通 worktree 配置不受任务隔离配置影响，生成 Web App 不默认启动任务。机制与使用边界见[任务协作](docs/架构算法/任务协作.md)和[接入规范](docs/规范/接入规范.md)。
+
+## License
+
+[MIT](LICENSE)
