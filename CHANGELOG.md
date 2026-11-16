@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 - 内部：nexus.config.json 的 release 段开启 `githubRelease`——此后发版链自动创建 GitHub Release 页面，内容取当期落款小节。
+- 修复：PWA 播着音乐退后台「蹦」一声破音（暮影堡垒真机复现）——主音量每次变化一律 30ms 短坡、不再裸赋值（回前台从淡出末值跳回偏好音量是主因）；切后台淡出收紧 0.3s→0.1s、挂起延后 350ms→150ms；新增 `pagehide` 兜底，10ms 短坡压到下限抢在系统冻结渲染线程前落地。`statechange` 回到 running 且页面已可见时同时把主音量拉回，补 iOS `visibilitychange` 漏触发的哑音；页面仍隐藏时系统自恢复不拉，避免后台出声。坑账新增一条。
 
 ## [0.14.0] - 2026-11-12
 

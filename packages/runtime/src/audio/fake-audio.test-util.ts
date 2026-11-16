@@ -4,6 +4,8 @@ export class FakeParam {
   value: number;
   /** 时间线上还没执行的渐变（真实 AudioParam 里它们会在之后覆盖直接赋的 value） */
   scheduled: number[] = [];
+  /** 最近一次 ramp 的终点时间（秒）；断言淡出/平滑时长用 */
+  rampEnd: number | null = null;
   constructor(v = 1) {
     this.value = v;
   }
@@ -13,9 +15,10 @@ export class FakeParam {
   setValueAtTime(v: number): void {
     this.value = v;
   }
-  linearRampToValueAtTime(v: number): void {
+  linearRampToValueAtTime(v: number, t?: number): void {
     this.value = v;
     this.scheduled.push(v);
+    if (t !== undefined) this.rampEnd = t;
   }
   setTargetAtTime(v: number): void {
     this.value = v;

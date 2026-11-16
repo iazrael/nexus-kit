@@ -2,8 +2,13 @@ import { errText } from "../util.js";
 import { defaultVolumePrefs } from "./prefs.js";
 /** 增益下限：exponentialRamp 与淡出都不能落到 0 */
 const GAIN_FLOOR = 0.0001;
-const HIDE_FADE_S = 0.3;
-const HIDE_SUSPEND_MS = 350;
+/** 主音量变化（设置/恢复/静音）的短坡时长：旧项目B 的防爆音方案 */
+const APPLY_FADE_S = 0.03;
+/** 切后台淡出：PWA 上渲染窗口极短，长了没跑完就被系统硬切（短了 PC 上听感骤降，可接受） */
+const HIDE_FADE_S = 0.1;
+const HIDE_SUSPEND_MS = 150;
+/** pagehide 兜底的压低坡长：此刻音频线程多半还在渲染，阶跃静音本身就是一记爆音 */
+const PAGE_HIDE_FADE_S = 0.01;
 const RESET_GAP_MS = 120;
 function defaultCreateContext() {
     const g = globalThis;
@@ -38,10 +43,16 @@ export function createAudioHost(options) {
     };
     function applyGains() {
         if (master !== null) {
-            // 先撤掉时间线上还没执行的渐变（切后台的淡出）：直接赋值挡不住它们，恢复的音量会又被拉回静音
-            if (ctx !== null)
-                master.gain.cancelScheduledValues(ctx.currentTime);
-            master.gain.value = prefs.muted ? 0 : prefs.master;
+            if (ctx === null) {
+                master.gain.value = prefs.muted ? GAIN_FLOOR : prefs.master;
+                return;
+            }
+            // 先撤掉时间线上还没执行的渐变（切后台的淡出）：直接赋值挡不住它们，恢复的音量会又被拉回静音。
+            // 撤掉后也不能裸赋值：从淡出末值直接跳回偏好音量是一记可听爆音（回前台必踩），钉住当前值走短坡
+            const g = master.gain;
+            g.cancelScheduledValues(ctx.currentTime);
+            g.setValueAtTime(Math.max(GAIN_FLOOR, g.value), ctx.currentTime);
+            g.linearRampToValueAtTime(prefs.muted ? GAIN_FLOOR : prefs.master, ctx.currentTime + APPLY_FADE_S);
         }
         for (const [name, node] of buses)
             node.gain.value = (prefs.buses[name] ?? 1) * duckFactor(name);
@@ -59,8 +70,14 @@ export function createAudioHost(options) {
     const notifyRunning = () => emit(runningListeners, undefined, "回到 running 通知");
     const onStateChange = () => {
         log?.info("音频引擎状态变化", { state: ctx?.state });
-        if (ctx?.state === "running")
+        if (ctx?.state === "running") {
+            // iOS 上 visibilitychange 会漏触发：状态已回 visible 时靠 statechange 把主音量从切后台的淡出里拉回（走短坡，
+            // 幂等，与 visibilitychange 的恢复重复触发无害）。页面仍隐藏时系统偶尔自己恢复 running，不拉：后台不该出声，
+            // 拉满再被系统掐断又会硬切爆音
+            if (typeof document === "undefined" || document.visibilityState === "visible")
+                applyGains();
             notifyRunning();
+        }
     };
     /** resume 一次；落地仍不 running 或被拒就重建 */
     function resumeOrRebuild(reason) {
@@ -113,6 +130,20 @@ export function createAudioHost(options) {
             return;
         }
         resumeOrRebuild("回前台");
+    };
+    /** PWA 退后台时渲染线程与定时器随时被冻结：0.1 秒淡出也未必跑得完，离开页面前就地压到下限，抢在系统硬切前落地。
+     * 压也走时间线短坡（10ms）：此刻音频线程多半还在渲染，阶跃静音本身就是一记爆音 */
+    const onPageHide = () => {
+        if (ctx === null || master === null || !options.suspendWhenHidden)
+            return;
+        if (hideTimer !== null) {
+            clearTimeout(hideTimer);
+            hideTimer = null;
+        }
+        const g = master.gain;
+        g.cancelScheduledValues(ctx.currentTime);
+        g.setValueAtTime(Math.max(GAIN_FLOOR, g.value), ctx.currentTime);
+        g.linearRampToValueAtTime(GAIN_FLOOR, ctx.currentTime + PAGE_HIDE_FADE_S);
     };
     function build() {
         let c;
@@ -185,8 +216,10 @@ export function createAudioHost(options) {
         emit(rebuildListeners, c, "引擎重建通知");
         startUp(c);
     }
-    if (typeof document !== "undefined")
+    if (typeof document !== "undefined") {
         document.addEventListener("visibilitychange", onVisibility);
+        document.addEventListener("pagehide", onPageHide);
+    }
     return {
         get context() {
             return ctx;
@@ -282,8 +315,10 @@ export function createAudioHost(options) {
             disposed = true;
             if (hideTimer !== null)
                 clearTimeout(hideTimer);
-            if (typeof document !== "undefined")
+            if (typeof document !== "undefined") {
                 document.removeEventListener("visibilitychange", onVisibility);
+                document.removeEventListener("pagehide", onPageHide);
+            }
             teardown();
             runningListeners.clear();
             rebuildListeners.clear();

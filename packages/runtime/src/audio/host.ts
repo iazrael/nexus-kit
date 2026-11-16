@@ -7,8 +7,11 @@
  *   掐死的声源（通知可能重复，订阅方的校对必须幂等）。
  * - resume 落地仍不 running 或被拒：关旧 context 换新的（上限 maxRebuilds，超过放弃并记 warn），广播 onRebuild。
  * - 总线：master + 宿主声明的分轨，增益 = 偏好音量 × 下潜系数；下潜按来源登记，多源取最深，全撤才回升。
+ *   主音量的每次变化都走短坡（APPLY_FADE_S）不裸赋值：裸跳变在任何节点都是可听爆音（旧项目B 真机踩过）。
  * - whenRunning(fn)：发声前置门，引擎挂着时先 resume、落地 running 才执行，不把音符排在冻结的时间轴上。
  * - resetSession()：iOS 停麦后输出被压到极轻而 state 仍是 running，挂起 120ms 再恢复逼系统重建会话。
+ * - 切后台淡出收紧到 0.1 秒并加 pagehide 兜底：PWA 退后台时渲染线程与定时器随时被系统冻结，非零增益下被
+ *   硬切输出就是「蹦」一声（暮影堡垒真机复现）；pagehide 里就地静音，抢在冻结前落地。
  *
  * 取材自旧项目A与旧项目B的音频引擎实现。
  */
@@ -32,8 +35,13 @@ export interface AudioHostOptions {
 
 /** 增益下限：exponentialRamp 与淡出都不能落到 0 */
 const GAIN_FLOOR = 0.0001;
-const HIDE_FADE_S = 0.3;
-const HIDE_SUSPEND_MS = 350;
+/** 主音量变化（设置/恢复/静音）的短坡时长：旧项目B 的防爆音方案 */
+const APPLY_FADE_S = 0.03;
+/** 切后台淡出：PWA 上渲染窗口极短，长了没跑完就被系统硬切（短了 PC 上听感骤降，可接受） */
+const HIDE_FADE_S = 0.1;
+const HIDE_SUSPEND_MS = 150;
+/** pagehide 兜底的压低坡长：此刻音频线程多半还在渲染，阶跃静音本身就是一记爆音 */
+const PAGE_HIDE_FADE_S = 0.01;
 const RESET_GAP_MS = 120;
 
 function defaultCreateContext(): AudioContext | null {
@@ -71,9 +79,16 @@ export function createAudioHost(options: AudioHostOptions) {
 
   function applyGains(): void {
     if (master !== null) {
-      // 先撤掉时间线上还没执行的渐变（切后台的淡出）：直接赋值挡不住它们，恢复的音量会又被拉回静音
-      if (ctx !== null) master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.value = prefs.muted ? 0 : prefs.master;
+      if (ctx === null) {
+        master.gain.value = prefs.muted ? GAIN_FLOOR : prefs.master;
+        return;
+      }
+      // 先撤掉时间线上还没执行的渐变（切后台的淡出）：直接赋值挡不住它们，恢复的音量会又被拉回静音。
+      // 撤掉后也不能裸赋值：从淡出末值直接跳回偏好音量是一记可听爆音（回前台必踩），钉住当前值走短坡
+      const g = master.gain;
+      g.cancelScheduledValues(ctx.currentTime);
+      g.setValueAtTime(Math.max(GAIN_FLOOR, g.value), ctx.currentTime);
+      g.linearRampToValueAtTime(prefs.muted ? GAIN_FLOOR : prefs.master, ctx.currentTime + APPLY_FADE_S);
     }
     for (const [name, node] of buses) node.gain.value = (prefs.buses[name] ?? 1) * duckFactor(name);
   }
@@ -91,7 +106,13 @@ export function createAudioHost(options: AudioHostOptions) {
 
   const onStateChange = (): void => {
     log?.info("音频引擎状态变化", { state: ctx?.state });
-    if (ctx?.state === "running") notifyRunning();
+    if (ctx?.state === "running") {
+      // iOS 上 visibilitychange 会漏触发：状态已回 visible 时靠 statechange 把主音量从切后台的淡出里拉回（走短坡，
+      // 幂等，与 visibilitychange 的恢复重复触发无害）。页面仍隐藏时系统偶尔自己恢复 running，不拉：后台不该出声，
+      // 拉满再被系统掐断又会硬切爆音
+      if (typeof document === "undefined" || document.visibilityState === "visible") applyGains();
+      notifyRunning();
+    }
   };
 
   /** resume 一次；落地仍不 running 或被拒就重建 */
@@ -142,6 +163,20 @@ export function createAudioHost(options: AudioHostOptions) {
       return;
     }
     resumeOrRebuild("回前台");
+  };
+
+  /** PWA 退后台时渲染线程与定时器随时被冻结：0.1 秒淡出也未必跑得完，离开页面前就地压到下限，抢在系统硬切前落地。
+   * 压也走时间线短坡（10ms）：此刻音频线程多半还在渲染，阶跃静音本身就是一记爆音 */
+  const onPageHide = (): void => {
+    if (ctx === null || master === null || !options.suspendWhenHidden) return;
+    if (hideTimer !== null) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    const g = master.gain;
+    g.cancelScheduledValues(ctx.currentTime);
+    g.setValueAtTime(Math.max(GAIN_FLOOR, g.value), ctx.currentTime);
+    g.linearRampToValueAtTime(GAIN_FLOOR, ctx.currentTime + PAGE_HIDE_FADE_S);
   };
 
   function build(): AudioContext | null {
@@ -214,7 +249,10 @@ export function createAudioHost(options: AudioHostOptions) {
     startUp(c);
   }
 
-  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener("pagehide", onPageHide);
+  }
 
   return {
     get context(): AudioContext | null {
@@ -312,7 +350,10 @@ export function createAudioHost(options: AudioHostOptions) {
     dispose(): void {
       disposed = true;
       if (hideTimer !== null) clearTimeout(hideTimer);
-      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+        document.removeEventListener("pagehide", onPageHide);
+      }
       teardown();
       runningListeners.clear();
       rebuildListeners.clear();

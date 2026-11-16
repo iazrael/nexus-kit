@@ -70,7 +70,7 @@ describe("createAudioHost", () => {
     await flush();
     const music = host.bus("music") as unknown as FakeGain;
     host.setPrefs({ master: 1, muted: true, buses: { music: 0.6, sfx: 1 } });
-    expect((host.master as unknown as FakeGain).gain.value).toBe(0);
+    expect((host.master as unknown as FakeGain).gain.value).toBeLessThan(0.001); // 静音也走短坡到下限（-80dB），不裸跳
     expect(music.gain.value).toBe(0.6);
     host.duck("music", "倒计时", 0.75);
     host.duck("music", "开麦", 0.5);
@@ -161,26 +161,73 @@ describe("createAudioHost", () => {
     expect(fn3).not.toHaveBeenCalled();
   });
 
-  it("suspendWhenHidden：切后台先淡出再挂起；挂起前回前台则取消", async () => {
+  it("suspendWhenHidden：切后台先短淡出再挂起；挂起前回前台则取消", async () => {
     vi.useFakeTimers();
     const { host, ctx } = rig({ suspendWhenHidden: true });
     host.unlock();
     await vi.advanceTimersByTimeAsync(0);
     setVisible("hidden");
-    expect((host.master as unknown as FakeGain).gain.value).toBeLessThan(0.01);
-    await vi.advanceTimersByTimeAsync(350);
+    const gain = (host.master as unknown as FakeGain).gain;
+    expect(gain.value).toBeLessThan(0.01);
+    expect(gain.rampEnd).toBeLessThanOrEqual(0.1); // 淡出收紧到 0.1 秒：iOS 渲染窗口极短，0.3 秒跑不完就被系统硬切
+    await vi.advanceTimersByTimeAsync(150);
     expect(ctx().state).toBe("suspended");
     setVisible("visible");
     await vi.advanceTimersByTimeAsync(0);
     expect(ctx().state).toBe("running");
     expect((host.master as unknown as FakeGain).gain.value).toBe(1);
     expect(FakeContext.created).toHaveLength(1); // 自己挂起的不算假死
-    // 0.3 秒内切回来：引擎没被挂起，但淡出渐变还在时间线上，必须撤掉，否则恢复的音量又被拉回静音
+    // 挂起前就切回来：引擎没被挂起，但淡出渐变还在时间线上，必须撤掉并短坡拉回，否则恢复的音量又被拉回静音
     setVisible("hidden");
     setVisible("visible");
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(200);
     expect(ctx().state).toBe("running");
-    expect((host.master as unknown as { gain: { scheduled: number[] } }).gain.scheduled).toEqual([]);
+    expect((host.master as unknown as { gain: { scheduled: number[] } }).gain.scheduled).toEqual([1]);
+  });
+
+  it("主音量变化一律 30ms 短坡：设置与静音不裸跳（防爆音，旧项目B 方案）", async () => {
+    const { host } = rig({ prefs: { master: 0.5, muted: false, buses: { music: 1, sfx: 1 } } });
+    host.unlock();
+    await flush();
+    const gain = (host.master as unknown as FakeGain).gain;
+    expect(gain.scheduled).toEqual([0.5]); // 建引擎时的初始音量也走短坡，不裸赋
+    expect(gain.rampEnd).toBeLessThanOrEqual(0.03);
+    host.setPrefs({ master: 0.9, muted: true, buses: { music: 1, sfx: 1 } });
+    expect(gain.scheduled.at(-1)).toBeLessThan(0.001); // 静音短坡到下限，不跳 0
+    host.setPrefs({ master: 0.9, muted: false, buses: { music: 1, sfx: 1 } });
+    expect(gain.scheduled.at(-1)).toBe(0.9);
+  });
+
+  it("statechange 回到 running 也把主音量从淡出里拉回（仅页面已可见）；隐藏期系统自恢复不拉，防止后台出声", async () => {
+    vi.useFakeTimers();
+    const { host, ctx } = rig({ suspendWhenHidden: true });
+    host.unlock();
+    await vi.advanceTimersByTimeAsync(0);
+    const gain = (host.master as unknown as FakeGain).gain;
+    setVisible("hidden");
+    await vi.advanceTimersByTimeAsync(150); // 已挂起；WebKit 偶尔在后台自己恢复 running
+    ctx().setState("running");
+    expect(gain.value).toBeLessThan(0.001); // 页面还藏着：不许把主音量拉满，否则后台出声、被掐断又是硬切爆音
+    visibility = "visible"; // iOS 漏触发场景：状态已回 visible，visibilitychange 事件却没派发
+    ctx().setState("suspended");
+    ctx().setState("running");
+    expect(gain.scheduled.at(-1)).toBe(1); // 只靠 statechange 也要恢复，不能停在淡出末值
+  });
+
+  it("pagehide 兜底：渲染线程没来得及跑淡出就被冻结时，离开页面前 10ms 短坡压到下限，防硬切爆音", async () => {
+    vi.useFakeTimers();
+    const { host } = rig({ suspendWhenHidden: true });
+    host.unlock();
+    await vi.advanceTimersByTimeAsync(0);
+    const gain = (host.master as unknown as FakeGain).gain;
+    setVisible("hidden");
+    document.dispatchEvent(new Event("pagehide")); // iOS PWA 退后台：淡出还排在时间线上，页面即将冻结
+    expect(gain.scheduled).toEqual([0.0001]); // 压到下限而非阶跃静音：此刻音频线程多半还在渲染
+    expect(gain.rampEnd).toBeLessThanOrEqual(0.01);
+    setVisible("visible"); // 回前台（含 bfcache 恢复）：短坡拉回，不爆音
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gain.value).toBe(1);
+    expect(gain.scheduled.at(-1)).toBe(1);
   });
 
   it("whenRunning：resume 被拒记日志；fn 抛错不外泄，记 warn 并返回 false", async () => {
