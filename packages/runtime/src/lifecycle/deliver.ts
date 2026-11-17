@@ -41,7 +41,9 @@ export async function deliverTextFile(name: string, text: string, options: { sha
     nav.canShare({ files: [file] })
   ) {
     try {
-      await nav.share({ files: [file], title: name });
+      // 只传 files：iOS 分享带 title/text/url 时会把字符串物化成额外文本条目，存进「文件」就多出一个
+      // 无名「文本 N」文件（真机复现：内容恰为 title 字符串）。文件名在 File 的 name 上，不靠 title 传达
+      await nav.share({ files: [file] });
       return "shared";
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return "cancelled";

@@ -52,9 +52,13 @@ describe("deliverTextFile", () => {
     const share = vi.fn(async () => undefined);
     Object.assign(navigator, { canShare: () => true, share });
     expect(await deliverTextFile("a.txt", "内容")).toBe("shared");
-    const file = (share.mock.calls[0] as unknown as [{ files: File[] }])[0].files[0]!;
+    const data = (share.mock.calls[0] as unknown as [{ files: File[] }])[0]!;
+    const file = data.files[0]!;
     expect(file.name).toBe("a.txt");
     expect(await file.text()).toBe("内容");
+    // iOS 怪癖：分享数据带 title/text/url 时，iOS 把字符串物化成额外文本条目，存进「文件」就是一个无名「文本 N」文件
+    // （暮影堡垒真机复现：每次导出诊断多出 38 字节的「文本」，内容恰为文件名字符串）——分享文件只传 files
+    expect(Object.keys(data)).toEqual(["files"]);
 
     Object.assign(navigator, { share: vi.fn(async () => Promise.reject(Object.assign(new Error("x"), { name: "AbortError" }))) });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
